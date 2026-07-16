@@ -1,0 +1,12 @@
+[package]
+name = "molrs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal cheminformatics core (SMILES parsing, molecular graph, aromaticity, rings, canonicalization) replacing RDKit for smiles2iupac"
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+flate2 = "1"
