@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="46.54pt" height="64.80pt" viewBox="0 0 46.54 64.80">
-  <line x1="23.27" y1="10.80" x2="23.27" y2="25.20" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="23.92" y1="24.08" x2="36.39" y2="31.28" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="22.62" y1="26.32" x2="35.09" y2="33.52" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="35.74" y1="32.40" x2="35.74" y2="46.80" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="36.39" y1="47.92" x2="23.92" y2="55.12" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="35.09" y1="45.68" x2="22.62" y2="52.88" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="23.27" y1="54.00" x2="10.80" y2="46.80" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="9.50" y1="46.80" x2="9.50" y2="32.40" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="12.10" y1="46.80" x2="12.10" y2="32.40" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="10.80" y1="32.40" x2="23.27" y2="25.20" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="59.01pt" height="50.40pt" viewBox="0 0 59.01 50.40">
+  <line x1="10.80" y1="10.80" x2="23.27" y2="18.00" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="22.62" y1="16.88" x2="35.09" y2="9.68" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="23.92" y1="19.12" x2="36.39" y2="11.92" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="35.74" y1="10.80" x2="48.21" y2="18.00" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="49.51" y1="18.00" x2="49.51" y2="32.40" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="46.92" y1="18.00" x2="46.92" y2="32.40" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="48.21" y1="32.40" x2="35.74" y2="39.60" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="35.09" y1="40.72" x2="22.62" y2="33.52" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="36.39" y1="38.48" x2="23.92" y2="31.28" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="23.27" y1="32.40" x2="23.27" y2="18.00" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
 </svg>

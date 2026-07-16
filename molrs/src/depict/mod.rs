@@ -102,26 +102,6 @@ pub fn compute_coords_2d(
 ) -> Result<Coords2D, DepictError> {
     let hidden = chain_layout::hidden_h_flags(g);
     let vadj = chain_layout::visible_adjacency(g, &hidden);
-
-    // 単一フラグメント確認 (複数は D7)
-    let visible: Vec<usize> = (0..g.atoms.len()).filter(|&i| !hidden[i]).collect();
-    if let Some(&first) = visible.first() {
-        let mut seen = vec![false; g.atoms.len()];
-        let mut stack = vec![first];
-        seen[first] = true;
-        while let Some(v) = stack.pop() {
-            for &nb in &vadj[v] {
-                if !seen[nb] {
-                    seen[nb] = true;
-                    stack.push(nb);
-                }
-            }
-        }
-        if visible.iter().any(|&i| !seen[i]) {
-            return Err(DepictError::Unsupported("multiple fragments (D7)".into()));
-        }
-    }
-
     let mut pos = place::layout_molecule(g, &hidden, &vadj)?;
 
     // 隠し H は親重原子の位置に置く (NaN 回避)
