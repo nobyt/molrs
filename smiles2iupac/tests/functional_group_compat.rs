@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 #[test]
 fn matches_python_detect_groups() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../corpus/functional_groups.jsonl.gz");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../corpus/functional_groups.jsonl.gz");
     let file = std::fs::File::open(&path)
         .unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display()));
     let mut text = String::new();

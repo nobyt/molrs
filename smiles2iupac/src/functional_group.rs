@@ -86,9 +86,9 @@ fn is_aldehyde(g: &MoleculeGraph, c_idx: usize) -> bool {
     }
     let has_h = has_h_neighbor(g, c_idx);
     // カルボン酸系の単結合 O が存在してはいけない
-    let has_single_o = g.adjacency[c_idx].iter().any(|&nb| {
-        g.atoms[nb].symbol == "O" && get_bond_order(g, c_idx, nb) == 1.0
-    });
+    let has_single_o = g.adjacency[c_idx]
+        .iter()
+        .any(|&nb| g.atoms[nb].symbol == "O" && get_bond_order(g, c_idx, nb) == 1.0);
     has_h && !has_single_o
 }
 
@@ -383,9 +383,7 @@ fn is_anhydride(g: &MoleculeGraph, c_idx: usize) -> bool {
             if o_nb_idx == c_idx {
                 continue;
             }
-            if g.atoms[o_nb_idx].symbol == "C"
-                && get_double_bonded_oxygen(g, o_nb_idx).is_some()
-            {
+            if g.atoms[o_nb_idx].symbol == "C" && get_double_bonded_oxygen(g, o_nb_idx).is_some() {
                 return true;
             }
         }
@@ -670,9 +668,7 @@ fn is_acyl_azide(g: &MoleculeGraph, c_idx: usize) -> bool {
     for &nb_idx in &g.adjacency[c_idx] {
         if g.atoms[nb_idx].symbol == "N" && get_bond_order(g, c_idx, nb_idx) == 1.0 {
             let n_has_n_double = g.adjacency[nb_idx].iter().any(|&n2| {
-                n2 != c_idx
-                    && g.atoms[n2].symbol == "N"
-                    && get_bond_order(g, nb_idx, n2) == 2.0
+                n2 != c_idx && g.atoms[n2].symbol == "N" && get_bond_order(g, nb_idx, n2) == 2.0
             });
             if n_has_n_double {
                 return true;
@@ -869,9 +865,17 @@ fn is_semicarbazone_or_thio(g: &MoleculeGraph, c_idx: usize) -> Option<&'static 
 
     let aldehyde_like = h_count >= 1 && c_count <= 1;
     if has_carbonyl {
-        Some(if aldehyde_like { "aldsemicarbazone" } else { "semicarbazone" })
+        Some(if aldehyde_like {
+            "aldsemicarbazone"
+        } else {
+            "semicarbazone"
+        })
     } else {
-        Some(if aldehyde_like { "aldthiosemicarbazone" } else { "thiosemicarbazone" })
+        Some(if aldehyde_like {
+            "aldthiosemicarbazone"
+        } else {
+            "thiosemicarbazone"
+        })
     }
 }
 
@@ -942,9 +946,7 @@ fn hydrazide_like(g: &MoleculeGraph, c_idx: usize, require_exo_n1: bool) -> bool
             }
             // N2 が C への二重結合を持たないこと (semicarbazone 除外)
             let n2_dbl_c = g.adjacency[n2_idx].iter().any(|&nb3| {
-                nb3 != nb_idx
-                    && g.atoms[nb3].symbol == "C"
-                    && get_bond_order(g, n2_idx, nb3) == 2.0
+                nb3 != nb_idx && g.atoms[nb3].symbol == "C" && get_bond_order(g, n2_idx, nb3) == 2.0
             });
             if n2_dbl_c {
                 continue;
@@ -968,15 +970,15 @@ fn is_selenohydrazide(g: &MoleculeGraph, c_idx: usize) -> bool {
 }
 
 fn is_sulfonyl_azide(g: &MoleculeGraph, s_idx: usize, n1_idx: usize) -> bool {
-    g.adjacency[n1_idx].iter().any(|&n2| {
-        n2 != s_idx && g.atoms[n2].symbol == "N" && get_bond_order(g, n1_idx, n2) == 2.0
-    })
+    g.adjacency[n1_idx]
+        .iter()
+        .any(|&n2| n2 != s_idx && g.atoms[n2].symbol == "N" && get_bond_order(g, n1_idx, n2) == 2.0)
 }
 
 fn is_sulfonohydrazide(g: &MoleculeGraph, s_idx: usize, n1_idx: usize) -> bool {
-    g.adjacency[n1_idx].iter().any(|&n2| {
-        n2 != s_idx && g.atoms[n2].symbol == "N" && get_bond_order(g, n1_idx, n2) == 1.0
-    })
+    g.adjacency[n1_idx]
+        .iter()
+        .any(|&n2| n2 != s_idx && g.atoms[n2].symbol == "N" && get_bond_order(g, n1_idx, n2) == 1.0)
 }
 
 // ─── メイン検出ループ ────────────────────────────────────────────
@@ -1125,9 +1127,10 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
 
         // カルバミン酸: RnN-C(=O)-OH
         if is_carbamic_acid(g, idx) {
-            let n_idx_ca = g.adjacency[idx].iter().copied().find(|&nb| {
-                g.atoms[nb].symbol == "N" && get_bond_order(g, idx, nb) == 1.0
-            });
+            let n_idx_ca = g.adjacency[idx]
+                .iter()
+                .copied()
+                .find(|&nb| g.atoms[nb].symbol == "N" && get_bond_order(g, idx, nb) == 1.0);
             let mut indices = vec![idx];
             indices.extend(get_double_bonded_oxygen(g, idx));
             indices.extend(n_idx_ca);
@@ -1479,9 +1482,12 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
         // カルボジイミド: R-N=C=N-R
         if is_carbodiimide(g, idx) {
             let mut indices = vec![idx];
-            indices.extend(g.adjacency[idx].iter().copied().filter(|&nb| {
-                g.atoms[nb].symbol == "N" && get_bond_order(g, idx, nb) == 2.0
-            }));
+            indices.extend(
+                g.adjacency[idx]
+                    .iter()
+                    .copied()
+                    .filter(|&nb| g.atoms[nb].symbol == "N" && get_bond_order(g, idx, nb) == 2.0),
+            );
             push(&mut groups, "carbodiimide", indices);
             continue;
         }
@@ -1504,9 +1510,10 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
 
         // イミド酸: C(=N)(O-H) — imidate_ester より先に検出
         if is_imidic_acid(g, idx) {
-            let n_idx = g.adjacency[idx].iter().copied().find(|&nb| {
-                g.atoms[nb].symbol == "N" && get_bond_order(g, idx, nb) == 2.0
-            });
+            let n_idx = g.adjacency[idx]
+                .iter()
+                .copied()
+                .find(|&nb| g.atoms[nb].symbol == "N" && get_bond_order(g, idx, nb) == 2.0);
             let mut indices = vec![idx];
             indices.extend(n_idx);
             push(&mut groups, "imidic_acid", indices);
@@ -1527,8 +1534,7 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
         if is_imine(g, idx) {
             let n_idx = get_imine_nitrogen(g, idx);
             // C=N 両原子が環内にある場合は環命名系に委譲
-            let both_in_ring =
-                g.atoms[idx].in_ring && n_idx.is_some_and(|n| g.atoms[n].in_ring);
+            let both_in_ring = g.atoms[idx].in_ring && n_idx.is_some_and(|n| g.atoms[n].in_ring);
             if !both_in_ring {
                 let mut indices = vec![idx];
                 indices.extend(n_idx);
@@ -1577,8 +1583,7 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
     }
 
     // アルコール: C-O-H (カルボニル系 C を除く)
-    let carbonyl_carbons: HashSet<usize> =
-        groups.iter().map(|fg| fg.atom_indices[0]).collect();
+    let carbonyl_carbons: HashSet<usize> = groups.iter().map(|fg| fg.atom_indices[0]).collect();
     for (o_idx, atom) in g.atoms.iter().enumerate() {
         if atom.symbol != "O" {
             continue;
@@ -1654,7 +1659,11 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
         if !seen_peroxide.insert(pair) {
             continue;
         }
-        push(&mut groups, "peroxide", vec![c1_idx, o1_idx, o2_idx, c2_idx]);
+        push(
+            &mut groups,
+            "peroxide",
+            vec![c1_idx, o1_idx, o2_idx, c2_idx],
+        );
     }
 
     // チオール / スルホキシド / スルホン / スルホンアミド: S 原子を走査
@@ -1841,9 +1850,12 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
                 .collect();
             let mut n3_nbrs_sa: Vec<usize> = Vec::new();
             for &n2_sa in &n2_nbrs_sa {
-                n3_nbrs_sa.extend(g.adjacency[n2_sa].iter().copied().filter(|&nb| {
-                    nb != n_idx_sa && g.atoms[nb].symbol == "N"
-                }));
+                n3_nbrs_sa.extend(
+                    g.adjacency[n2_sa]
+                        .iter()
+                        .copied()
+                        .filter(|&nb| nb != n_idx_sa && g.atoms[nb].symbol == "N"),
+                );
             }
             let mut indices = vec![s_idx];
             indices.extend(&o_double);
@@ -1863,9 +1875,7 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
                 .iter()
                 .copied()
                 .filter(|&nb| {
-                    nb != s_idx
-                        && g.atoms[nb].symbol == "N"
-                        && get_bond_order(g, n1_idx, nb) == 1.0
+                    nb != s_idx && g.atoms[nb].symbol == "N" && get_bond_order(g, n1_idx, nb) == 1.0
                 })
                 .collect();
             let mut indices = vec![s_idx];
@@ -1892,9 +1902,7 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
                 .iter()
                 .copied()
                 .filter(|&nb| {
-                    nb != s_idx
-                        && g.atoms[nb].symbol == "N"
-                        && get_bond_order(g, n1_idx, nb) == 1.0
+                    nb != s_idx && g.atoms[nb].symbol == "N" && get_bond_order(g, n1_idx, nb) == 1.0
                 })
                 .collect();
             let mut indices = vec![s_idx];
@@ -2067,7 +2075,11 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
 
         if c_neighbors.len() == 1 && o_double.len() == 2 && !o_single_oh.is_empty() {
             // セレノン酸 / テルロン酸: R-Se(=O)2-OH
-            let gtype = if is_se { "selenonic_acid" } else { "telluronic_acid" };
+            let gtype = if is_se {
+                "selenonic_acid"
+            } else {
+                "telluronic_acid"
+            };
             let mut indices = vec![se_idx];
             indices.extend(&c_neighbors);
             indices.extend(&o_double);
@@ -2075,7 +2087,11 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
             push(&mut groups, gtype, indices);
         } else if c_neighbors.len() == 1 && o_double.len() == 1 && !o_single_oh.is_empty() {
             // セレニン酸 / テルリン酸: R-Se(=O)-OH
-            let gtype = if is_se { "seleninic_acid" } else { "tellurinic_acid" };
+            let gtype = if is_se {
+                "seleninic_acid"
+            } else {
+                "tellurinic_acid"
+            };
             let mut indices = vec![se_idx];
             indices.extend(&c_neighbors);
             indices.extend(&o_double);
@@ -2087,7 +2103,11 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
             && h_neighbors.is_empty()
         {
             // セレネン酸 / テルレン酸: R-Se-OH
-            let gtype = if is_se { "selenenic_acid" } else { "tellurenic_acid" };
+            let gtype = if is_se {
+                "selenenic_acid"
+            } else {
+                "tellurenic_acid"
+            };
             let mut indices = vec![se_idx];
             indices.extend(&c_neighbors);
             indices.push(o_single_oh[0]);
@@ -2153,8 +2173,12 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
         }
         if atom.formal_charge == 1 {
             // N+ で O/N 隣接なし (純アンモニウム) は ammonium 検出へ
-            let has_o = g.adjacency[n_idx].iter().any(|&nb| g.atoms[nb].symbol == "O");
-            let has_n = g.adjacency[n_idx].iter().any(|&nb| g.atoms[nb].symbol == "N");
+            let has_o = g.adjacency[n_idx]
+                .iter()
+                .any(|&nb| g.atoms[nb].symbol == "O");
+            let has_n = g.adjacency[n_idx]
+                .iter()
+                .any(|&nb| g.atoms[nb].symbol == "N");
             if !has_o && !has_n {
                 continue;
             }
@@ -2208,9 +2232,7 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
             if n_sgl_pos.len() == 1 {
                 let n2_idx = n_sgl_pos[0];
                 let n3 = g.adjacency[n2_idx].iter().copied().find(|&nb| {
-                    nb != n_idx
-                        && g.atoms[nb].symbol == "N"
-                        && get_bond_order(g, n2_idx, nb) == 3.0
+                    nb != n_idx && g.atoms[nb].symbol == "N" && get_bond_order(g, n2_idx, nb) == 3.0
                 });
                 if let Some(n3_idx) = n3 {
                     push(
@@ -2254,7 +2276,11 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
             .collect();
         if o_all.len() == 1 && o_dbl.len() == 1 && c_neighbors.len() == 1 && h_neighbors.is_empty()
         {
-            push(&mut groups, "nitroso", vec![c_neighbors[0], n_idx, o_dbl[0]]);
+            push(
+                &mut groups,
+                "nitroso",
+                vec![c_neighbors[0], n_idx, o_dbl[0]],
+            );
             continue;
         }
 
@@ -2758,7 +2784,9 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
                 .copied()
                 .filter(|&nb| {
                     !o_oh.contains(&nb)
-                        && g.adjacency[nb].iter().any(|&occ| g.atoms[occ].symbol == "C")
+                        && g.adjacency[nb]
+                            .iter()
+                            .any(|&occ| g.atoms[occ].symbol == "C")
                 })
                 .collect();
             if !c_neighbors.is_empty() && !o_oh.is_empty() {
@@ -2788,7 +2816,11 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
         }
         let c_neighbors = nbrs(g, central_idx, "C");
         if !c_neighbors.is_empty() {
-            let gtype = if atom.symbol == "Ge" { "germane_org" } else { "stannane_org" };
+            let gtype = if atom.symbol == "Ge" {
+                "germane_org"
+            } else {
+                "stannane_org"
+            };
             let mut indices = vec![central_idx];
             indices.extend(&c_neighbors);
             push(&mut groups, gtype, indices);
@@ -2837,7 +2869,11 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
             if !c_alkyl.is_empty() || !h_neighbors.is_empty() {
                 let mut indices = vec![n_idx];
                 indices.extend(&cn_neighbors);
-                indices.extend(if c_alkyl.is_empty() { &h_neighbors } else { &c_alkyl });
+                indices.extend(if c_alkyl.is_empty() {
+                    &h_neighbors
+                } else {
+                    &c_alkyl
+                });
                 push(&mut groups, "isocyanide", indices);
             }
         }
@@ -2849,16 +2885,21 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
             continue;
         }
         // O 隣接あり → N-oxide or nitro / N 隣接あり → diazo/azo
-        if g.adjacency[n_idx].iter().any(|&nb| g.atoms[nb].symbol == "O")
-            || g.adjacency[n_idx].iter().any(|&nb| g.atoms[nb].symbol == "N")
+        if g.adjacency[n_idx]
+            .iter()
+            .any(|&nb| g.atoms[nb].symbol == "O")
+            || g.adjacency[n_idx]
+                .iter()
+                .any(|&nb| g.atoms[nb].symbol == "N")
         {
             continue;
         }
         let c_neighbors = nbrs(g, n_idx, "C");
         // イソシアニド R-N≡C は ammonium ではない
-        if c_neighbors.iter().any(|&cn| {
-            g.atoms[cn].formal_charge == -1 && get_bond_order(g, n_idx, cn) == 3.0
-        }) {
+        if c_neighbors
+            .iter()
+            .any(|&cn| g.atoms[cn].formal_charge == -1 && get_bond_order(g, n_idx, cn) == 3.0)
+        {
             continue;
         }
         if !c_neighbors.is_empty() {
@@ -2948,10 +2989,7 @@ pub fn detect_groups(g: &MoleculeGraph) -> Vec<FunctionalGroup> {
 // ─── 集約と主基選択 ─────────────────────────────────────────────
 
 /// 最高優先度の同一 group_type が複数ある場合、diol/dione/dioic_acid 等に集約する。
-pub fn aggregate_groups(
-    groups: Vec<FunctionalGroup>,
-    g: &MoleculeGraph,
-) -> Vec<FunctionalGroup> {
+pub fn aggregate_groups(groups: Vec<FunctionalGroup>, g: &MoleculeGraph) -> Vec<FunctionalGroup> {
     if groups.is_empty() {
         return groups;
     }
@@ -2990,9 +3028,7 @@ pub fn aggregate_groups(
                 .enumerate()
                 .filter(|(_, rs)| {
                     g.adjacency[c].iter().any(|&nb| {
-                        g.atoms[nb].symbol == "C"
-                            && g.atoms[nb].is_aromatic
-                            && rs.contains(&nb)
+                        g.atoms[nb].symbol == "C" && g.atoms[nb].is_aromatic && rs.contains(&nb)
                     })
                 })
                 .map(|(i, _)| i)
@@ -3067,7 +3103,12 @@ pub fn aggregate_groups(
         priority: top_priority,
     };
     let mut result = vec![merged];
-    result.extend(groups.iter().filter(|fg| fg.group_type != top_type).cloned());
+    result.extend(
+        groups
+            .iter()
+            .filter(|fg| fg.group_type != top_type)
+            .cloned(),
+    );
     result
 }
 

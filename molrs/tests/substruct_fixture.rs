@@ -1,8 +1,8 @@
 //! S1.6 完了条件ゲート: corpus/substruct_fixture.jsonl.gz (RDKit
 //! GetSubstructMatches の正解データ) と全ペアで一致すること (順序無視)。
 
-use molrs::substructure::{substruct_matches, substruct_matches_smarts};
 use flate2::read::GzDecoder;
+use molrs::substructure::{substruct_matches, substruct_matches_smarts};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -52,9 +52,9 @@ fn matches_rdkit_fixture() {
         let mut got = if mode == "smarts" {
             substruct_matches_smarts(&target, qsmi).expect("pattern parses")
         } else {
-            let query = query_cache.entry(qsmi.to_string()).or_insert_with(|| {
-                molrs::graph::build_molecule_graph(qsmi).expect("query builds")
-            });
+            let query = query_cache
+                .entry(qsmi.to_string())
+                .or_insert_with(|| molrs::graph::build_molecule_graph(qsmi).expect("query builds"));
             substruct_matches(&target, query)
         };
         got.sort();
