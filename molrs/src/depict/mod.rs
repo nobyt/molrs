@@ -11,11 +11,14 @@
 //! スタイル ([`Style`]) は ChemDraw 語彙のパラメータ集合で、
 //! IUPAC 既定 / ACS 1996 / Nature / RSC / Wiley のプリセットを持つ。
 
+pub(crate) mod chain_layout;
 pub mod point2;
 pub mod style;
 
 pub use point2::Point2;
 pub use style::Style;
+
+use crate::graph::MoleculeGraph;
 
 /// レイアウトパラメータ。
 #[derive(Debug, Clone)]
@@ -80,6 +83,56 @@ impl std::fmt::Display for DepictError {
 }
 
 impl std::error::Error for DepictError {}
+
+/// 2D レイアウト座標を生成する (結合長 = 1.0 単位)。
+///
+/// 現在の対応範囲 (実装の進行に応じて拡大):
+/// - 無環・単一フラグメント (D2)
+/// - 環系は D4-D6、フラグメント並置は D7、くさびは D9 で対応
+pub fn compute_coords_2d(
+    g: &MoleculeGraph,
+    _params: &LayoutParams,
+) -> Result<Coords2D, DepictError> {
+    let hidden = chain_layout::hidden_h_flags(g);
+    if !g.ring_atom_sets.is_empty() {
+        return Err(DepictError::Unsupported("ring systems (D4-D6)".into()));
+    }
+    let vadj = chain_layout::visible_adjacency(g, &hidden);
+
+    // 単一フラグメント確認 (複数は D7)
+    let visible: Vec<usize> = (0..g.atoms.len()).filter(|&i| !hidden[i]).collect();
+    if let Some(&first) = visible.first() {
+        let mut seen = vec![false; g.atoms.len()];
+        let mut stack = vec![first];
+        seen[first] = true;
+        while let Some(v) = stack.pop() {
+            for &nb in &vadj[v] {
+                if !seen[nb] {
+                    seen[nb] = true;
+                    stack.push(nb);
+                }
+            }
+        }
+        if visible.iter().any(|&i| !seen[i]) {
+            return Err(DepictError::Unsupported("multiple fragments (D7)".into()));
+        }
+    }
+
+    let mut pos = chain_layout::layout_acyclic(g, &hidden, &vadj)?;
+    chain_layout::enforce_ez(g, &mut pos, &hidden, &vadj);
+
+    // 隠し H は親重原子の位置に置く (NaN 回避)
+    for i in 0..g.atoms.len() {
+        if hidden[i] {
+            if let Some(&parent) = g.adjacency[i].iter().find(|&&nb| !hidden[nb]) {
+                pos[i] = pos[parent];
+            }
+        }
+    }
+
+    let wedge = vec![None; g.bonds.len()];
+    Ok(Coords2D { pos, hidden, wedge })
+}
 
 #[cfg(test)]
 mod tests {
