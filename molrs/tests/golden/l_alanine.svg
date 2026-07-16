@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="53.63pt" height="50.88pt" viewBox="0 0 53.63 50.88">
+  <polygon points="32.23,18.24 25.11,12.97 24.11,14.70" fill="black"/>
+  <line x1="32.23" y1="18.24" x2="44.70" y2="11.04" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="32.23" y1="18.24" x2="32.23" y2="32.64" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="32.23" y1="32.64" x2="39.64" y2="36.91" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="34.86" y1="31.16" x2="39.60" y2="33.90" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="32.23" y1="32.64" x2="24.83" y2="36.91" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <text x="5.04" y="11.04" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">H<tspan font-size="7.00" dy="2.50">2</tspan><tspan font-size="10.00" dy="-2.50">N</tspan></text>
+  <text x="40.81" y="39.84" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">O</text>
+  <text x="8.65" y="39.84" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">HO</text>
+</svg>

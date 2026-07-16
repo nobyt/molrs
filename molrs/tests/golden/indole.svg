@@ -1,17 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="68.70pt" height="50.40pt" viewBox="0 0 68.70 50.40">
-  <line x1="9.50" y1="32.40" x2="9.50" y2="18.00" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="12.10" y1="32.40" x2="12.10" y2="18.00" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="10.80" y1="18.00" x2="23.27" y2="10.80" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="23.92" y1="9.68" x2="36.39" y2="16.88" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="22.62" y1="11.92" x2="35.09" y2="19.12" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="35.74" y1="18.00" x2="44.21" y2="15.25" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="52.67" y1="18.00" x2="57.90" y2="25.20" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="58.95" y1="25.96" x2="50.49" y2="37.61" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="56.85" y1="24.44" x2="48.39" y2="36.09" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="49.44" y1="36.85" x2="35.74" y2="32.40" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="36.39" y1="33.52" x2="23.92" y2="40.72" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="35.09" y1="31.28" x2="22.62" y2="38.48" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="23.27" y1="39.60" x2="10.80" y2="32.40" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="35.74" y1="32.40" x2="35.74" y2="18.00" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <text x="49.44" y="13.55" font-family="Helvetica, Arial, sans-serif" font-size="10.00" text-anchor="middle" dominant-baseline="central">NH</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="59.55pt" height="42.13pt" viewBox="0 0 59.55 42.13">
+  <line x1="5.04" y1="29.89" x2="5.04" y2="15.49" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="7.63" y1="27.30" x2="7.63" y2="18.08" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="5.04" y1="15.49" x2="17.51" y2="8.29" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="17.51" y1="8.29" x2="29.98" y2="15.49" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="18.46" y1="11.83" x2="26.44" y2="16.44" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="29.98" y1="15.49" x2="38.59" y2="12.69" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="48.72" y1="17.99" x2="52.14" y2="22.69" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="52.14" y1="22.69" x2="43.68" y2="34.34" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="48.52" y1="23.26" x2="43.10" y2="30.72" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="43.68" y1="34.34" x2="29.98" y2="29.89" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="29.98" y1="29.89" x2="17.51" y2="37.09" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="26.44" y1="28.94" x2="18.46" y2="33.55" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="17.51" y1="37.09" x2="5.04" y2="29.89" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="29.98" y1="29.89" x2="29.98" y2="15.49" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <text x="40.07" y="11.04" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">NH</text>
 </svg>

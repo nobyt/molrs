@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="46.54pt" height="43.20pt" viewBox="0 0 46.54 43.20">
-  <line x1="35.74" y1="32.40" x2="23.27" y2="25.20" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="23.92" y1="26.32" x2="16.21" y2="30.77" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="22.62" y1="24.08" x2="14.92" y2="28.53" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <line x1="23.27" y1="25.20" x2="23.27" y2="16.30" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
-  <text x="10.80" y="32.40" font-family="Helvetica, Arial, sans-serif" font-size="10.00" text-anchor="middle" dominant-baseline="central">O</text>
-  <text x="23.27" y="10.80" font-family="Helvetica, Arial, sans-serif" font-size="10.00" text-anchor="middle" dominant-baseline="central">OH</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="38.91pt" height="43.68pt" viewBox="0 0 38.91 43.68">
+  <line x1="33.87" y1="32.64" x2="21.40" y2="25.44" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="21.40" y1="25.44" x2="14.00" y2="29.71" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="21.36" y1="28.45" x2="16.63" y2="31.19" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="21.40" y1="25.44" x2="21.40" y2="18.64" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <text x="5.04" y="32.64" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">O</text>
+  <text x="17.51" y="11.04" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">OH</text>
 </svg>

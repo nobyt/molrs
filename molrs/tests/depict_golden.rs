@@ -22,6 +22,12 @@ const GOLDEN: &[(&str, &str)] = &[
     ("indole", "c1ccc2[nH]ccc2c1"),
     ("norbornane", "C1CC2CCC1C2"),
     ("spiro45decane", "C1CCC2(CC1)CCCC2"),
+    // 立体・ラベル (D9-D10)
+    ("l_alanine", "N[C@@H](C)C(=O)O"),
+    ("phenol", "Oc1ccccc1"),
+    ("nitrobenzene", "[O-][N+](=O)c1ccccc1"),
+    ("trans_dimethylcyclohexane", "C[C@H]1CCCC[C@@H]1C"),
+    ("aspirin", "CC(=O)Oc1ccccc1C(=O)O"),
 ];
 
 fn golden_dir() -> PathBuf {

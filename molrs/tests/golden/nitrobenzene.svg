@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="63.85pt" height="59.28pt" viewBox="0 0 63.85 59.28">
+  <line x1="21.40" y1="18.64" x2="21.40" y2="17.84" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="16.56" y1="28.24" x2="14.00" y2="29.71" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="17.39" y1="30.75" x2="15.75" y2="31.69" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="29.00" y1="29.82" x2="33.87" y2="32.64" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="33.87" y1="32.64" x2="46.34" y2="25.44" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="37.41" y1="33.59" x2="45.39" y2="28.98" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="46.34" y1="25.44" x2="58.81" y2="32.64" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="58.81" y1="32.64" x2="58.81" y2="47.04" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="56.22" y1="35.23" x2="56.22" y2="44.45" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="58.81" y1="47.04" x2="46.34" y2="54.24" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="46.34" y1="54.24" x2="33.87" y2="47.04" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="45.39" y1="50.70" x2="37.41" y2="46.09" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <line x1="33.87" y1="47.04" x2="33.87" y2="32.64" stroke="black" stroke-width="0.60" stroke-linecap="round"/>
+  <text x="17.51" y="11.04" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">O<tspan font-size="7.00" dy="-4.00">-</tspan></text>
+  <text x="17.79" y="25.44" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">N<tspan font-size="7.00" dy="-4.00">+</tspan></text>
+  <text x="5.04" y="32.64" font-family="Helvetica, Arial, sans-serif" font-size="10.00" dominant-baseline="central">O</text>
+</svg>

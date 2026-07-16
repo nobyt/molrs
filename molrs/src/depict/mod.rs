@@ -13,6 +13,7 @@
 
 pub(crate) mod chain_layout;
 pub(crate) mod collide;
+pub(crate) mod label;
 pub(crate) mod place;
 pub mod point2;
 pub(crate) mod ring_layout;
