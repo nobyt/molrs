@@ -12,6 +12,7 @@
 //! IUPAC 既定 / ACS 1996 / Nature / RSC / Wiley のプリセットを持つ。
 
 pub(crate) mod chain_layout;
+pub(crate) mod collide;
 pub(crate) mod place;
 pub mod point2;
 pub(crate) mod ring_layout;
@@ -98,11 +99,11 @@ impl std::error::Error for DepictError {}
 /// - 環系は D4-D6、フラグメント並置は D7、くさびは D9 で対応
 pub fn compute_coords_2d(
     g: &MoleculeGraph,
-    _params: &LayoutParams,
+    params: &LayoutParams,
 ) -> Result<Coords2D, DepictError> {
     let hidden = chain_layout::hidden_h_flags(g);
     let vadj = chain_layout::visible_adjacency(g, &hidden);
-    let mut pos = place::layout_molecule(g, &hidden, &vadj)?;
+    let mut pos = place::layout_molecule(g, &hidden, &vadj, params)?;
 
     // 隠し H は親重原子の位置に置く (NaN 回避)
     for i in 0..g.atoms.len() {

@@ -13,6 +13,8 @@ fn corpus_smoke() {
     let mut n = 0usize;
     let mut ok = 0usize;
     let mut unsupported = 0usize;
+    let mut n_clash = 0usize;
+    let mut clash_examples: Vec<String> = Vec::new();
     let mut failed: Vec<(String, String)> = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let rec: serde_json::Value = serde_json::from_str(line).expect("json");
@@ -22,7 +24,25 @@ fn corpus_smoke() {
         };
         n += 1;
         match compute_coords_2d(&g, &LayoutParams::default()) {
-            Ok(_) => ok += 1,
+            Ok(c) => {
+                ok += 1;
+                // 残存衝突の統計 (非結合可視原子対 < 0.5)
+                let vis: Vec<usize> = (0..g.atoms.len()).filter(|&i| !c.hidden[i]).collect();
+                let mut clash = false;
+                for (k, &i) in vis.iter().enumerate() {
+                    for &j in &vis[k + 1..] {
+                        if !g.adjacency[i].contains(&j) && c.pos[i].distance(c.pos[j]) < 0.5 {
+                            clash = true;
+                        }
+                    }
+                }
+                if clash {
+                    n_clash += 1;
+                    if clash_examples.len() < 8 {
+                        clash_examples.push(smiles.to_string());
+                    }
+                }
+            }
             Err(DepictError::Unsupported(_)) => unsupported += 1,
             Err(e) => {
                 if failed.len() < 15 {
@@ -31,7 +51,10 @@ fn corpus_smoke() {
             }
         }
     }
-    println!("depict smoke: {ok}/{n} ok, {unsupported} unsupported");
+    println!("depict smoke: {ok}/{n} ok, {unsupported} unsupported, {n_clash} with residual clash");
+    for s in &clash_examples {
+        println!("  CLASH {s}");
+    }
     for (s, e) in &failed {
         println!("  FAIL {s}: {e}");
     }

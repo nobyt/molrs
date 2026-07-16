@@ -10,6 +10,7 @@ use crate::conformer::params::{perceive_hybridization, Hybridization};
 use crate::graph::MoleculeGraph;
 
 use super::chain_layout::{assign_child_angles, enforce_ez, layout_acyclic};
+use super::collide::resolve_collisions;
 use super::point2::{snap_angle_30, Point2};
 use super::ring_layout::{layout_ring_system, ring_systems, RingSystem};
 use super::DepictError;
@@ -19,6 +20,7 @@ pub(crate) fn layout_molecule(
     g: &MoleculeGraph,
     hidden: &[bool],
     vadj: &[Vec<usize>],
+    params: &super::LayoutParams,
 ) -> Result<Vec<Point2>, DepictError> {
     let n = g.atoms.len();
     let mut pos = vec![Point2::ZERO; n];
@@ -51,6 +53,7 @@ pub(crate) fn layout_molecule(
         let vadj_f = crate::depict::chain_layout::visible_adjacency(g, &hidden_f);
         let mut fpos = layout_fragment(g, &hidden_f, &vadj_f)?;
         enforce_ez(g, &mut fpos, &hidden_f, &vadj_f);
+        resolve_collisions(g, &mut fpos, &hidden_f, &vadj_f, &frag, params);
         orient_fragment(g, &mut fpos, &frag, &hidden_f, &vadj_f);
 
         // 横並び: 左端を x_cursor に、y は重心 0 に揃える
@@ -315,7 +318,8 @@ mod tests {
         let g = build_molecule_graph(smiles).unwrap();
         let hidden = hidden_h_flags(&g);
         let vadj = visible_adjacency(&g, &hidden);
-        let pos = layout_molecule(&g, &hidden, &vadj).unwrap();
+        let pos =
+            layout_molecule(&g, &hidden, &vadj, &crate::depict::LayoutParams::default()).unwrap();
         (g, pos, hidden)
     }
 
