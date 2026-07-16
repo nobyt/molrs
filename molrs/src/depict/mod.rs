@@ -14,11 +14,13 @@
 pub(crate) mod chain_layout;
 pub mod point2;
 pub mod style;
+pub mod svg;
 
 pub use point2::Point2;
 pub use style::Style;
+pub use svg::to_svg;
 
-use crate::graph::MoleculeGraph;
+use crate::graph::{build_molecule_graph, MoleculeGraph};
 
 /// レイアウトパラメータ。
 #[derive(Debug, Clone)]
@@ -67,6 +69,8 @@ pub struct Coords2D {
 /// 2D レイアウトのエラー。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DepictError {
+    /// 不正な SMILES ([`depict_svg`] 経由のみ)
+    InvalidSmiles(String),
     /// レイアウト不能 (詳細メッセージ付き)
     LayoutFailed(String),
     /// まだ移植されていない構造クラス (実装の進行に応じて縮小)
@@ -76,6 +80,7 @@ pub enum DepictError {
 impl std::fmt::Display for DepictError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            DepictError::InvalidSmiles(s) => write!(f, "invalid SMILES: {s}"),
             DepictError::LayoutFailed(s) => write!(f, "2D layout failed: {s}"),
             DepictError::Unsupported(s) => write!(f, "2D layout unsupported: {s}"),
         }
@@ -132,6 +137,13 @@ pub fn compute_coords_2d(
 
     let wedge = vec![None; g.bonds.len()];
     Ok(Coords2D { pos, hidden, wedge })
+}
+
+/// SMILES から SVG まで一括で行う便利関数。
+pub fn depict_svg(smiles: &str, style: &Style) -> Result<String, DepictError> {
+    let g = build_molecule_graph(smiles).map_err(|e| DepictError::InvalidSmiles(e.to_string()))?;
+    let coords = compute_coords_2d(&g, &LayoutParams::default())?;
+    Ok(to_svg(&g, &coords, style))
 }
 
 #[cfg(test)]
