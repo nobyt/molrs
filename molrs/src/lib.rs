@@ -12,6 +12,7 @@
 mod aromaticity;
 pub mod canon;
 pub mod conformer;
+pub mod depict;
 pub mod elements;
 pub mod geometry;
 pub mod graph;
