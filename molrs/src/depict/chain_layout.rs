@@ -175,7 +175,7 @@ fn normalize_angle(a: f64) -> f64 {
 
 /// 30° スロットから「既存方向との最小角距離が最大」のものを順に選ぶ。
 /// タイは |sin| が小さい方 → 角度が小さい方。
-fn fallback_slots(placed_dirs: &[f64], n_children: usize) -> Vec<f64> {
+pub(crate) fn fallback_slots(placed_dirs: &[f64], n_children: usize) -> Vec<f64> {
     let mut dirs: Vec<f64> = placed_dirs.to_vec();
     let mut out = Vec::with_capacity(n_children);
     for _ in 0..n_children {

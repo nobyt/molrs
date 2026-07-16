@@ -14,6 +14,9 @@ fn corpus_smoke() {
     let mut ok = 0usize;
     let mut unsupported = 0usize;
     let mut n_clash = 0usize;
+    let mut n_stereo = 0usize;
+    let mut n_stereo_fail = 0usize;
+    let mut stereo_examples: Vec<String> = Vec::new();
     let mut clash_examples: Vec<String> = Vec::new();
     let mut failed: Vec<(String, String)> = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -42,6 +45,19 @@ fn corpus_smoke() {
                         clash_examples.push(smiles.to_string());
                     }
                 }
+                // 立体 round-trip
+                let has_stereo = g.atoms.iter().any(|a| a.chiral_tag.is_some())
+                    || g.bonds.iter().any(|b| b.stereo.is_some());
+                if has_stereo {
+                    n_stereo += 1;
+                    let failures = molrs::depict::verify_stereo_2d(&g, &c);
+                    if !failures.is_empty() {
+                        n_stereo_fail += 1;
+                        if stereo_examples.len() < 10 {
+                            stereo_examples.push(format!("{smiles}: {failures:?}"));
+                        }
+                    }
+                }
             }
             Err(DepictError::Unsupported(_)) => unsupported += 1,
             Err(e) => {
@@ -51,9 +67,15 @@ fn corpus_smoke() {
             }
         }
     }
-    println!("depict smoke: {ok}/{n} ok, {unsupported} unsupported, {n_clash} with residual clash");
+    println!(
+        "depict smoke: {ok}/{n} ok, {unsupported} unsupported, {n_clash} with residual clash, stereo {}/{n_stereo} ok",
+        n_stereo - n_stereo_fail
+    );
     for s in &clash_examples {
         println!("  CLASH {s}");
+    }
+    for s in &stereo_examples {
+        println!("  STEREO {s}");
     }
     for (s, e) in &failed {
         println!("  FAIL {s}: {e}");

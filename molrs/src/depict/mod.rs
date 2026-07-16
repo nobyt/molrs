@@ -16,10 +16,12 @@ pub(crate) mod collide;
 pub(crate) mod place;
 pub mod point2;
 pub(crate) mod ring_layout;
+pub mod stereo2d;
 pub mod style;
 pub mod svg;
 
 pub use point2::Point2;
+pub use stereo2d::verify_stereo_2d;
 pub use style::Style;
 pub use svg::to_svg;
 
@@ -46,13 +48,21 @@ impl Default for LayoutParams {
     }
 }
 
-/// くさび結合の向き。narrow 端は常に `bond.begin_idx` 側。
+/// くさび結合の向き。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WedgeDir {
     /// solid wedge (手前)
     Up,
     /// hashed wedge (奥)
     Down,
+}
+
+/// くさび指定。細端 (narrow) は立体中心の原子。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Wedge {
+    pub dir: WedgeDir,
+    /// 細端の原子インデックス
+    pub narrow: usize,
 }
 
 /// 2D レイアウト結果。
@@ -66,7 +76,7 @@ pub struct Coords2D {
     /// 描画時に隠す原子 (ラベルに畳まれた H)
     pub hidden: Vec<bool>,
     /// 結合ごとのくさび指定 (graph.bonds と同順)
-    pub wedge: Vec<Option<WedgeDir>>,
+    pub wedge: Vec<Option<Wedge>>,
 }
 
 /// 2D レイアウトのエラー。
@@ -103,19 +113,26 @@ pub fn compute_coords_2d(
 ) -> Result<Coords2D, DepictError> {
     let hidden = chain_layout::hidden_h_flags(g);
     let vadj = chain_layout::visible_adjacency(g, &hidden);
-    let mut pos = place::layout_molecule(g, &hidden, &vadj, params)?;
+    let pos = place::layout_molecule(g, &hidden, &vadj, params)?;
 
-    // 隠し H は親重原子の位置に置く (NaN 回避)
+    let mut coords = Coords2D {
+        pos,
+        hidden,
+        wedge: vec![None; g.bonds.len()],
+    };
+
+    // 立体くさびの割当て (必要なら隠し H を再表示する)
+    stereo2d::assign_wedges(g, &mut coords);
+
+    // 残った隠し H は親重原子の位置に置く (NaN 回避)
     for i in 0..g.atoms.len() {
-        if hidden[i] {
-            if let Some(&parent) = g.adjacency[i].iter().find(|&&nb| !hidden[nb]) {
-                pos[i] = pos[parent];
+        if coords.hidden[i] {
+            if let Some(&parent) = g.adjacency[i].iter().find(|&&nb| !coords.hidden[nb]) {
+                coords.pos[i] = coords.pos[parent];
             }
         }
     }
-
-    let wedge = vec![None; g.bonds.len()];
-    Ok(Coords2D { pos, hidden, wedge })
+    Ok(coords)
 }
 
 /// SMILES から SVG まで一括で行う便利関数。
