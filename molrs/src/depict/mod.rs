@@ -14,6 +14,7 @@
 pub(crate) mod chain_layout;
 pub(crate) mod collide;
 pub(crate) mod label;
+pub mod molblock2d;
 pub(crate) mod place;
 pub mod point2;
 pub(crate) mod ring_layout;
@@ -21,6 +22,7 @@ pub mod stereo2d;
 pub mod style;
 pub mod svg;
 
+pub use molblock2d::to_mol_block_2d;
 pub use point2::Point2;
 pub use stereo2d::verify_stereo_2d;
 pub use style::Style;

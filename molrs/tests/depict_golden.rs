@@ -98,6 +98,49 @@ fn golden_svg_snapshots() {
 }
 
 #[test]
+fn all_presets_render_same_coords() {
+    // レイアウトとスタイルの直交性: 同一 Coords2D から全プリセットで
+    // well-formed な SVG が出る。座標生成はスタイル非依存
+    use molrs::depict::{compute_coords_2d, to_svg, LayoutParams};
+    let g = molrs::graph::build_molecule_graph("CC(=O)Oc1ccccc1C(=O)O").unwrap();
+    let c = compute_coords_2d(&g, &LayoutParams::default()).unwrap();
+    let presets = [
+        Style::iupac_default(),
+        Style::acs_1996(),
+        Style::nature(),
+        Style::rsc(),
+        Style::wiley(),
+    ];
+    let mut svgs = Vec::new();
+    for s in &presets {
+        let svg = to_svg(&g, &c, s);
+        assert_well_formed(&svg);
+        svgs.push(svg);
+    }
+    // ACS と Nature は寸法が異なる (スタイルが効いている)
+    assert_ne!(svgs[1], svgs[2]);
+    // ACS と Wiley は同値 (現行定義)
+    assert_eq!(svgs[1], svgs[4]);
+}
+
+#[test]
+fn mol_block_2d_golden() {
+    use molrs::depict::{compute_coords_2d, to_mol_block_2d, LayoutParams};
+    let g = molrs::graph::build_molecule_graph("N[C@@H](C)C(=O)O").unwrap();
+    let c = compute_coords_2d(&g, &LayoutParams::default()).unwrap();
+    let mol = to_mol_block_2d(&g, &c, "l-alanine");
+    let dir = golden_dir();
+    let path = dir.join("l_alanine.mol");
+    if std::env::var("UPDATE_DEPICT_GOLDEN").is_ok() {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, &mol).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path).expect("golden mol");
+    assert_eq!(mol, expected);
+}
+
+#[test]
 fn well_formed_checker_rejects_bad_xml() {
     let result = std::panic::catch_unwind(|| assert_well_formed("<svg><line></svg>"));
     assert!(result.is_err());
