@@ -5,10 +5,9 @@
 //! H は結合が右から来る場合に左置き (HO–, H₂N–)。bbox は結合線の
 //! クリップ (margin_width) に使う。
 
-use crate::graph::MoleculeGraph;
-
 use super::point2::Point2;
 use super::Style;
+use crate::graph::MoleculeGraph;
 
 /// Helvetica 近似文字幅 (フォントサイズ比)。
 fn char_width(c: char) -> f64 {
@@ -65,7 +64,7 @@ pub(crate) fn has_label(g: &MoleculeGraph, vadj: &[Vec<usize>], i: usize) -> boo
 }
 
 /// H を左に置くか: 可視隣接の平均方向が右向き (結合が右から来る)。
-pub(crate) fn h_on_left(g: &MoleculeGraph, pos: &[Point2], vadj: &[Vec<usize>], i: usize) -> bool {
+pub(crate) fn h_on_left(pos: &[Point2], vadj: &[Vec<usize>], i: usize) -> bool {
     if vadj[i].is_empty() {
         return false;
     }

@@ -104,7 +104,7 @@ pub fn to_svg(g: &MoleculeGraph, c: &Coords2D, s: &Style) -> String {
             if c.hidden[i] || !has_label(g, &vadj, i) {
                 return None;
             }
-            let h_left = h_on_left(g, &c.pos, &vadj, i);
+            let h_left = h_on_left(&c.pos, &vadj, i);
             Some(build_label(
                 &g.atoms[i].symbol,
                 h_counts[i],
@@ -236,7 +236,7 @@ pub fn to_svg(g: &MoleculeGraph, c: &Coords2D, s: &Style) -> String {
                     &g.atoms[i].symbol,
                     h_counts[i],
                     g.atoms[i].formal_charge,
-                    h_on_left(g, &c.pos, &vadj, i),
+                    h_on_left(&c.pos, &vadj, i),
                     s,
                 ),
             });

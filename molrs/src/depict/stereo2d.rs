@@ -28,7 +28,7 @@ fn rs_from_3d(center: Vec3, mut nbrs: Vec<(usize, Vec3)>) -> Option<char> {
         return None;
     }
     // CIP 順位降順 (rank 大 = 高順位)
-    nbrs.sort_by(|a, b| b.0.cmp(&a.0));
+    nbrs.sort_by_key(|x| std::cmp::Reverse(x.0));
     let v = |p: Vec3| p - center;
     let phantom;
     let v4 = if nbrs.len() == 4 {
