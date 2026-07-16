@@ -12,7 +12,9 @@
 //! IUPAC 既定 / ACS 1996 / Nature / RSC / Wiley のプリセットを持つ。
 
 pub(crate) mod chain_layout;
+pub(crate) mod place;
 pub mod point2;
+pub(crate) mod ring_layout;
 pub mod style;
 pub mod svg;
 
@@ -99,9 +101,6 @@ pub fn compute_coords_2d(
     _params: &LayoutParams,
 ) -> Result<Coords2D, DepictError> {
     let hidden = chain_layout::hidden_h_flags(g);
-    if !g.ring_atom_sets.is_empty() {
-        return Err(DepictError::Unsupported("ring systems (D4-D6)".into()));
-    }
     let vadj = chain_layout::visible_adjacency(g, &hidden);
 
     // 単一フラグメント確認 (複数は D7)
@@ -123,8 +122,7 @@ pub fn compute_coords_2d(
         }
     }
 
-    let mut pos = chain_layout::layout_acyclic(g, &hidden, &vadj)?;
-    chain_layout::enforce_ez(g, &mut pos, &hidden, &vadj);
+    let mut pos = place::layout_molecule(g, &hidden, &vadj)?;
 
     // 隠し H は親重原子の位置に置く (NaN 回避)
     for i in 0..g.atoms.len() {

@@ -130,10 +130,12 @@ pub fn to_svg(g: &MoleculeGraph, c: &Coords2D, s: &Style) -> String {
     // フォント高の半分ぶん)
     let trim = 0.55 * s.font_size_pt;
     let spacing = s.bond_spacing_frac * scale;
-    for b in &g.bonds {
+    for (bi, b) in g.bonds.iter().enumerate() {
         if c.hidden[b.begin_idx] || c.hidden[b.end_idx] {
             continue;
         }
+        // 芳香族 (1.5) はケクレ形で描く (GR-6: 内円は非推奨)
+        let order = g.kekule_bond_orders[bi];
         let mut p1 = to_pt(c.pos[b.begin_idx]);
         let mut p2 = to_pt(c.pos[b.end_idx]);
         let Some(dir) = (p2 - p1).normalized() else {
@@ -145,7 +147,7 @@ pub fn to_svg(g: &MoleculeGraph, c: &Coords2D, s: &Style) -> String {
         if has_label(g, &vadj, b.end_idx) {
             p2 = p2 - dir * trim;
         }
-        push_bond_lines(&mut out, p1, p2, b.bond_order, spacing, s.line_width_pt);
+        push_bond_lines(&mut out, p1, p2, order, spacing, s.line_width_pt);
     }
 
     // 原子ラベル

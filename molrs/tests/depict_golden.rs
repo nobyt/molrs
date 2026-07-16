@@ -7,13 +7,21 @@ use std::path::PathBuf;
 
 use molrs::depict::{depict_svg, Style};
 
-/// 対象分子 (無環のみ — 環系は D4-D6 で追加)。
 const GOLDEN: &[(&str, &str)] = &[
+    // 無環 (D3)
     ("ethanol", "CCO"),
     ("isobutane", "CC(C)C"),
     ("e2butene", "C/C=C/C"),
     ("acetonitrile", "CC#N"),
     ("acetic_acid", "CC(=O)O"),
+    // 環系 (D4-D6)
+    ("benzene", "c1ccccc1"),
+    ("toluene", "Cc1ccccc1"),
+    ("pyridine", "c1ccncc1"),
+    ("naphthalene", "c1ccc2ccccc2c1"),
+    ("indole", "c1ccc2[nH]ccc2c1"),
+    ("norbornane", "C1CC2CCC1C2"),
+    ("spiro45decane", "C1CCC2(CC1)CCCC2"),
 ];
 
 fn golden_dir() -> PathBuf {

@@ -61,6 +61,9 @@ pub struct MoleculeGraph {
     pub bond_orders: HashMap<(usize, usize), f64>,
     /// SSSR (S1.4 で構築)
     pub ring_atom_sets: Vec<Vec<usize>>,
+    /// ケクレ化後の結合次数 (bonds と同順)。芳香族結合は 1.5 ではなく
+    /// ケクレ形の 1.0/2.0 を持つ (2D 描画のケクレ表示用, D4)
+    pub kekule_bond_orders: Vec<f64>,
     /// 元の SMILES パース結果 (S1.7 立体化学で使用)
     pub parsed: ParsedMolecule,
     /// パーサ原子 idx → グラフ原子 idx (マージされた H は None)
@@ -298,6 +301,7 @@ pub fn build_molecule_graph(smiles: &str) -> Result<MoleculeGraph, ChemError> {
     }
 
     let mut bonds: Vec<BondInfo> = Vec::new();
+    let mut kekule_bond_orders: Vec<f64> = Vec::new();
     for (ei, ab) in arom_bonds.iter().enumerate() {
         bonds.push(BondInfo {
             begin_idx: ab.a,
@@ -305,6 +309,7 @@ pub fn build_molecule_graph(smiles: &str) -> Result<MoleculeGraph, ChemError> {
             bond_order: if bond_arom[ei] { 1.5 } else { ab.order },
             stereo: None,
         });
+        kekule_bond_orders.push(ab.order);
     }
 
     // ---- 7. 明示 H 原子の付加 (AddHs 相当: 重原子順に末尾へ) ----
@@ -327,6 +332,7 @@ pub fn build_molecule_graph(smiles: &str) -> Result<MoleculeGraph, ChemError> {
                 bond_order: 1.0,
                 stereo: None,
             });
+            kekule_bond_orders.push(1.0);
         }
     }
 
@@ -346,6 +352,7 @@ pub fn build_molecule_graph(smiles: &str) -> Result<MoleculeGraph, ChemError> {
         adjacency,
         bond_orders,
         ring_atom_sets: sssr_rings,
+        kekule_bond_orders,
         parsed,
         parser_to_graph,
     };

@@ -90,7 +90,11 @@ fn is_linear(hyb: &[Hybridization], i: usize) -> bool {
 }
 
 /// v の未配置の子に方向を割り当てる。角度は v から子へ向かう向き。
-fn assign_child_angles(placed_dirs: &[f64], n_children: usize, linear: bool) -> Vec<f64> {
+pub(crate) fn assign_child_angles(
+    placed_dirs: &[f64],
+    n_children: usize,
+    linear: bool,
+) -> Vec<f64> {
     match placed_dirs.len() {
         0 => {
             // 孤立原子から開始 (直径パス端が孤立分岐の場合)。最初の子は +30°、
@@ -327,18 +331,26 @@ pub(crate) fn enforce_ez(
         if got == want {
             continue;
         }
-        // end 側部分木 (begin を通らない到達集合) を軸で鏡映
+        // end 側部分木 (この結合自体を通らない到達集合) を軸で鏡映。
+        // begin まで到達できる場合はこの結合が環内にある → 鏡映不能なので
+        // スキップ (環内 E/Z は環レイアウトに従う)
         let (a1, a2) = (b.begin_idx, b.end_idx);
         let mut in_subtree = vec![false; g.atoms.len()];
         let mut stack = vec![a2];
         in_subtree[a2] = true;
         while let Some(v) = stack.pop() {
             for &nb in &vadj[v] {
-                if nb != a1 && !in_subtree[nb] {
+                if (v == a2 && nb == a1) || (v == a1 && nb == a2) {
+                    continue; // この結合の辺は通らない
+                }
+                if !in_subtree[nb] {
                     in_subtree[nb] = true;
                     stack.push(nb);
                 }
             }
+        }
+        if in_subtree[a1] {
+            continue; // 環内二重結合
         }
         let q = pos[a1];
         let Some(u) = (pos[a2] - pos[a1]).normalized() else {
