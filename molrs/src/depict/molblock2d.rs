@@ -9,6 +9,38 @@ use crate::graph::MoleculeGraph;
 
 use super::{Coords2D, WedgeDir};
 
+/// 結合が環内か。
+fn is_ring_bond(g: &MoleculeGraph, i: usize, j: usize) -> bool {
+    g.ring_atom_sets.iter().any(|ring| {
+        let n = ring.len();
+        (0..n).any(|k| {
+            let (a, b) = (ring[k], ring[(k + 1) % n]);
+            (a == i && b == j) || (a == j && b == i)
+        })
+    })
+}
+
+/// 立体を持ちうるのに未指定の非環二重結合か (両端に他の重原子隣接がある)。
+/// 2D 描画は見かけ上の幾何を持ってしまうため、MOL では crossed bond
+/// (stereo code 3 = cis/trans either) で「未指定」を明示する。
+fn is_unspecified_stereogenic_double(g: &MoleculeGraph, c: &Coords2D, bi: usize) -> bool {
+    let b = &g.bonds[bi];
+    if g.kekule_bond_orders[bi] != 2.0 || b.stereo.is_some() {
+        return false;
+    }
+    let (i, j) = (b.begin_idx, b.end_idx);
+    if is_ring_bond(g, i, j) {
+        return false;
+    }
+    let _ = c;
+    let has_other_heavy = |x: usize, other: usize| {
+        g.adjacency[x]
+            .iter()
+            .any(|&nb| nb != other && g.atoms[nb].symbol != "H")
+    };
+    has_other_heavy(i, j) && has_other_heavy(j, i)
+}
+
 fn bond_type_code(order: f64) -> u8 {
     if order == 2.0 {
         2
@@ -67,7 +99,13 @@ pub fn to_mol_block_2d(g: &MoleculeGraph, c: &Coords2D, title: &str) -> String {
                     WedgeDir::Down => 6,
                 }
             }
-            None => 0,
+            None => {
+                if is_unspecified_stereogenic_double(g, c, bi) {
+                    3 // crossed bond: cis/trans either
+                } else {
+                    0
+                }
+            }
         };
         s.push_str(&format!(
             "{:3}{:3}{:3}{:3}\n",

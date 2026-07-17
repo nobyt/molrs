@@ -23,25 +23,35 @@ use super::{Coords2D, Wedge, WedgeDir};
 /// 3D 隣接ベクトル (CIP 順位降順) から R/S を求める。
 /// 規約: 最下位置換基を奥に見て 1→2→3 が時計回りなら R。
 /// 3 隣接 (孤立電子対) はファントム (単位ベクトル和の逆) を最下位に置く。
-fn rs_from_3d(center: Vec3, mut nbrs: Vec<(usize, Vec3)>) -> Option<char> {
+/// `lone_pair`: 中心が真の 3 配位 (第 4 の暗黙隣接が孤立電子対) か。
+/// false なら「実 4 配位だが 1 隣接 (隠し H) が不可視」を意味する。
+/// 両者で RDKit の 2D 立体認識の規約が異なる — 符号は RDKit との往復一致で
+/// 決めた経験的規約で、tools/check_depict_stereo.py の外部オラクルが検証する。
+fn rs_from_3d(center: Vec3, mut nbrs: Vec<(usize, Vec3)>, lone_pair: bool) -> Option<char> {
     if nbrs.len() < 3 || nbrs.len() > 4 {
         return None;
     }
     // CIP 順位降順 (rank 大 = 高順位)
     nbrs.sort_by_key(|x| std::cmp::Reverse(x.0));
     let v = |p: Vec3| p - center;
-    let phantom;
+    if nbrs.len() == 3 && lone_pair {
+        // 真の 3 配位: 3 本の順位順ベクトルの符号付き体積
+        let (v1, v2, v3) = (v(nbrs[0].1), v(nbrs[1].1), v(nbrs[2].1));
+        let vol = v1.dot(v2.cross(v3));
+        if vol.abs() < 1e-9 {
+            return None;
+        }
+        return Some(if vol > 0.0 { 'R' } else { 'S' });
+    }
     let v4 = if nbrs.len() == 4 {
         v(nbrs[3].1)
     } else {
-        let mut sum = Vec3::ZERO;
-        for &(_, p) in &nbrs {
-            if let Some(u) = v(p).normalized() {
-                sum = sum + u;
-            }
+        // 隠し H が第 4 隣接: くさびの反対側の面直方向に置く
+        let z_sum: f64 = nbrs.iter().map(|&(_, p)| v(p).z).sum();
+        if z_sum.abs() < 1e-9 {
+            return None; // くさびなし (平面) では決定不能
         }
-        phantom = -sum;
-        phantom
+        Vec3::new(0.0, 0.0, -z_sum)
     };
     let (v1, v2, v3) = (v(nbrs[0].1), v(nbrs[1].1), v(nbrs[2].1));
     let n = v1.cross(v2) + v2.cross(v3) + v3.cross(v1);
@@ -77,9 +87,12 @@ pub(crate) fn derive_rs(
             },
             _ => 0.0,
         };
-        nbrs.push((ranks[nb], lift(coords.pos[nb], z)));
+        // H ノードは cip_ranks の範囲外 (重原子のみ) — CIP 最下位 = 0
+        nbrs.push((ranks.get(nb).copied().unwrap_or(0), lift(coords.pos[nb], z)));
     }
-    rs_from_3d(lift(coords.pos[c], 0.0), nbrs)
+    // 真の 3 配位 (孤立電子対) か、隠し H で 3 隣接に見えているだけか
+    let lone_pair = g.adjacency[c].len() == 3;
+    rs_from_3d(lift(coords.pos[c], 0.0), nbrs, lone_pair)
 }
 
 fn bond_index(g: &MoleculeGraph, i: usize, j: usize) -> Option<usize> {
@@ -223,7 +236,7 @@ mod tests {
             (2, Vec3::new(-0.5, -0.866, 0.0)),
             (1, Vec3::new(0.0, 0.0, -1.0)),
         ];
-        assert_eq!(rs_from_3d(c, nbrs), Some('S'));
+        assert_eq!(rs_from_3d(c, nbrs, false), Some('S'));
         // u4 を +z (手前) にすると R
         let nbrs_r = vec![
             (4, Vec3::new(1.0, 0.0, 0.0)),
@@ -231,7 +244,7 @@ mod tests {
             (2, Vec3::new(-0.5, -0.866, 0.0)),
             (1, Vec3::new(0.0, 0.0, 1.0)),
         ];
-        assert_eq!(rs_from_3d(c, nbrs_r), Some('R'));
+        assert_eq!(rs_from_3d(c, nbrs_r, false), Some('R'));
     }
 
     #[test]

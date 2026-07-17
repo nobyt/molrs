@@ -100,7 +100,7 @@ fn depict_property_gate() {
     let mut n_ring_bond_ok = 0usize;
     let mut n_stereo_mols = 0usize;
     let mut errors: Vec<String> = Vec::new();
-    let mut err = |msg: String, errors: &mut Vec<String>| {
+    let err = |msg: String, errors: &mut Vec<String>| {
         if errors.len() < 20 {
             errors.push(msg);
         }

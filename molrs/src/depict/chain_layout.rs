@@ -291,7 +291,7 @@ fn ez_reference(
         .iter()
         .copied()
         .filter(|&nb| nb != other && !hidden[nb])
-        .max_by_key(|&nb| (ranks[nb], usize::MAX - nb))
+        .max_by_key(|&nb| (ranks.get(nb).copied().unwrap_or(0), usize::MAX - nb))
 }
 
 /// 2D 座標から二重結合の E/Z を再導出する。参照隣接が両端にあれば Some。
