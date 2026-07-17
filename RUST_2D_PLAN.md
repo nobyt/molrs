@@ -1,5 +1,18 @@
 # 2D 構造式描画 (depict) 実装計画
 
+> **完了 (2026-07-17)**: D0〜D13 全ステップ実装済み。実測結果:
+> - コーパス 7,453 分子 + 補助立体セット 500 分子で性質ゲート
+>   (`tests/depict_gate.rs`, DEPICT_GATE_FULL=1) 全項目 green —
+>   レイアウト成功 100% / 非環結合長・30° 量子化 100% / 環結合長 99.4%
+>   (橋かけ内部のみ逸脱) / 立体 round-trip 708/708 / SVG well-formed / 決定的
+> - RDKit 外部オラクル (smiles2iupac tools/check_depict_stereo.py):
+>   くさび付き 2D MOL → RDKit 再認識 → 異性体込み正準 SMILES 一致 **708/708**
+> - 既知の制約: (1) かご型 (キュバン) は 2D で本質的に交差 — ゲート例外 1 分子。
+>   (2) CIP ラベルの付かないパリティのみの立体中心 (橋頭など) はグラフが
+>   CIP ラベルしか持たないため表現不能。(3) Wiley プリセットは ACS 同値の
+>   暫定値 (公式一次情報が未確認)。
+> - 目視レビュー: `... | cargo run --release --bin depict_gallery > gallery.html`
+
 関連文書: [RUST_PORT_HANDOFF.md](RUST_PORT_HANDOFF.md) (開発サイクル)、
 [RDKIT_RUST_PLAN.md](RDKIT_RUST_PLAN.md)、[RUST_3D_PLAN.md](RUST_3D_PLAN.md) (完了済み 3D 計画)
 
