@@ -14,6 +14,7 @@ pub(crate) mod formula;
 pub(crate) mod layers;
 pub mod number;
 pub mod sha256;
+pub(crate) mod stereo;
 
 pub use base26::inchi_key_from_string;
 
@@ -64,17 +65,36 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     let formula = formula::formula_layer(g);
     let c = layers::connection_layer(&comps[0]);
     let h = layers::hydrogen_layer(&comps[0]);
+    let b = stereo::double_bond_layer(g, &comps[0]);
+    let (t, m, s_char) = stereo::tetrahedral_layers(g, &comps[0]);
 
-    let mut s = format!("InChI=1S/{formula}");
+    let mut out = format!("InChI=1S/{formula}");
     if !c.is_empty() {
-        s.push_str("/c");
-        s.push_str(&c);
+        out.push_str("/c");
+        out.push_str(&c);
     }
     if !h.is_empty() {
-        s.push_str("/h");
-        s.push_str(&h);
+        out.push_str("/h");
+        out.push_str(&h);
     }
-    Ok(s)
+    // 立体層 (順序: b, t, m, s)
+    if !b.is_empty() {
+        out.push_str("/b");
+        out.push_str(&b);
+    }
+    if !t.is_empty() {
+        out.push_str("/t");
+        out.push_str(&t);
+    }
+    if let Some(m) = m {
+        out.push_str("/m");
+        out.push(m);
+    }
+    if let Some(sc) = s_char {
+        out.push_str("/s");
+        out.push(sc);
+    }
+    Ok(out)
 }
 
 /// SMILES から標準 InChI を生成する便利関数。

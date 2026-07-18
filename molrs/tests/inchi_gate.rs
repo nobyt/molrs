@@ -143,16 +143,14 @@ fn full_inchi_matches_rdkit_where_produced() {
         let Ok(g) = build_molecule_graph(&r.smiles) else {
             continue;
         };
-        // v1 適用範囲: 立体層 (/b /t /m /s) と同位体層 (/i) を含まない分子
-        let has_stereo_or_iso = ["/b", "/t", "/m", "/s", "/i"]
-            .iter()
-            .any(|tag| r.inchi.contains(tag));
+        // v1 適用範囲: 同位体層 (/i) を含まない中性・単一成分 (立体は対応済み)
+        let has_iso = r.inchi.contains("/i");
         let charged = g.atoms.iter().any(|a| a.formal_charge != 0);
         let multi = r.inchi[9..].split('/').next().unwrap().contains('.');
-        if !charged && !multi && !has_stereo_or_iso {
+        if !charged && !multi && !has_iso {
             total_neutral_single += 1;
         }
-        if has_stereo_or_iso {
+        if has_iso {
             continue; // v2
         }
         if let Ok(got) = molrs::inchi::to_inchi(&g) {

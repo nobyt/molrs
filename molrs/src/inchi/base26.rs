@@ -103,12 +103,18 @@ pub fn inchi_key_from_string(inchi: &str) -> String {
     }
     let b1 = block1(&sha256(major.as_bytes()));
 
-    // minor 文字列 = 立体・同位体層。空なら sha256("") → "UHFFFAOY"。
+    // minor 文字列 = 立体・同位体層 (先頭 '/' 込み) を 2 重連結してハッシュ
+    // (公式 ikey.c: strcpy(sminor+slen, sminor))。空なら sha256("") → "UHFFFAOY"。
     let b2 = if minor_layers.is_empty() {
         block2(&sha256(b""))
     } else {
-        let minor = minor_layers.join("/");
-        block2(&sha256(minor.as_bytes()))
+        let mut minor = String::new();
+        for l in &minor_layers {
+            minor.push('/');
+            minor.push_str(l);
+        }
+        let doubled = format!("{minor}{minor}");
+        block2(&sha256(doubled.as_bytes()))
     };
 
     // フラグ: 標準 InChI = 'S'、バージョン = 'A'
