@@ -16,6 +16,7 @@ pub mod depict;
 pub mod elements;
 pub mod geometry;
 pub mod graph;
+pub mod inchi;
 pub mod rings;
 pub mod smarts;
 pub mod smiles;
