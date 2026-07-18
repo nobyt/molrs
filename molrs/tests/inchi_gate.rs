@@ -115,8 +115,10 @@ fn canonical_numbering_matches_auxinfo() {
     for m in &mism {
         println!("  MISMATCH {m}");
     }
-    // I3 段階の到達点 = 70.96%。残差は (a) InChI の正準タイブレーク基準
-    // (辺シグネチャ最小化とは異なる) と (b) 可動 H 対称化の未実装 (I4)。
-    // 閾値は退行検知用 (現状より少し下)。忠実度向上は I3→I4 の継続課題。
-    assert!(rate >= 0.68, "numbering match rate {rate:.4} < 0.68");
+    // I3 到達点 = 99.29% (7400/7453)。残差の内訳:
+    // - 有機金属 (金属-C 切断で多成分化) — I4 normalize で対応
+    // - イソシアニド等の電荷正規化差 — I4
+    // - 環内 N 互変異性 (ベンズイミダゾリン等) — v2
+    // - 立体依存タイブレーク (E/Z 対称分子) — 骨格層の文字列には影響しない
+    assert!(rate >= 0.985, "numbering match rate {rate:.4} < 0.985");
 }
