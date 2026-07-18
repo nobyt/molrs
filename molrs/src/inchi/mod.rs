@@ -10,7 +10,7 @@
 //! 依存クレートゼロを保つため SHA-256 を自前実装している ([`sha256`])。
 
 pub(crate) mod formula;
-pub(crate) mod number;
+pub mod number;
 pub mod sha256;
 
 use crate::graph::MoleculeGraph;
