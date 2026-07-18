@@ -10,6 +10,7 @@
 //! 依存クレートゼロを保つため SHA-256 を自前実装している ([`sha256`])。
 
 pub(crate) mod formula;
+pub(crate) mod layers;
 pub mod number;
 pub mod sha256;
 
@@ -38,6 +39,46 @@ impl std::error::Error for InchiError {}
 /// 分子グラフの Hill 式層を返す (I2)。式のみが必要な場合の公開 API。
 pub fn formula(g: &MoleculeGraph) -> String {
     formula::formula_layer(g)
+}
+
+/// 標準 InChI (`InChI=1S/…`) を生成する (I4、v1 範囲)。
+///
+/// v1 は単一成分・中性 (電荷 q/p・立体・同位体・多成分・有機金属は未対応)。
+/// 適用範囲外は [`InchiError::Unsupported`] を返す。
+pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
+    let comps = layers::build_components(g);
+    if comps.len() != 1 {
+        return Err(InchiError::Unsupported("multi-component (v2)".into()));
+    }
+    // 電荷を持つ分子は q/p 層が要る (v1 未対応)。可動群で中和される
+    // 負電荷は許容 (p 層は今後)。ここでは全原子中性のみ通す。
+    if g.atoms.iter().any(|a| a.formal_charge != 0) {
+        return Err(InchiError::Unsupported(
+            "charged (q/p layer pending)".into(),
+        ));
+    }
+
+    let formula = formula::formula_layer(g);
+    let c = layers::connection_layer(&comps[0]);
+    let h = layers::hydrogen_layer(&comps[0]);
+
+    let mut s = format!("InChI=1S/{formula}");
+    if !c.is_empty() {
+        s.push_str("/c");
+        s.push_str(&c);
+    }
+    if !h.is_empty() {
+        s.push_str("/h");
+        s.push_str(&h);
+    }
+    Ok(s)
+}
+
+/// SMILES から標準 InChI を生成する便利関数。
+pub fn inchi_of(smiles: &str) -> Result<String, InchiError> {
+    let g = crate::graph::build_molecule_graph(smiles)
+        .map_err(|e| InchiError::InvalidSmiles(e.to_string()))?;
+    to_inchi(&g)
 }
 
 #[cfg(test)]

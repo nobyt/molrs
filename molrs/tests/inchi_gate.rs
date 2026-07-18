@@ -17,6 +17,7 @@ struct Record {
     smiles: String,
     formula: String,
     numbering: Vec<Vec<usize>>,
+    inchi: String,
 }
 
 fn load_fixture() -> Vec<Record> {
@@ -50,6 +51,7 @@ fn load_fixture() -> Vec<Record> {
                 smiles: v["s"].as_str().unwrap().to_string(),
                 formula: v["formula"].as_str().unwrap_or("").to_string(),
                 numbering,
+                inchi: v["inchi"].as_str().unwrap_or("").to_string(),
             }
         })
         .collect()
@@ -121,4 +123,57 @@ fn canonical_numbering_matches_auxinfo() {
     // - 環内 N 互変異性 (ベンズイミダゾリン等) — v2
     // - 立体依存タイブレーク (E/Z 対称分子) — 骨格層の文字列には影響しない
     assert!(rate >= 0.985, "numbering match rate {rate:.4} < 0.985");
+}
+
+#[test]
+fn full_inchi_matches_rdkit_where_produced() {
+    // v1 が文字列を生成する範囲 (中性・単一成分) でフル InChI が一致すること。
+    // カバレッジ (生成できた割合) も報告する。
+    let recs = load_fixture();
+    let mut produced = 0usize;
+    let mut ok = 0usize;
+    let mut total_neutral_single = 0usize;
+    let mut mism: Vec<String> = Vec::new();
+    for r in &recs {
+        if r.inchi.is_empty() {
+            continue;
+        }
+        let Ok(g) = build_molecule_graph(&r.smiles) else {
+            continue;
+        };
+        // v1 適用範囲: 立体層 (/b /t /m /s) と同位体層 (/i) を含まない分子
+        let has_stereo_or_iso = ["/b", "/t", "/m", "/s", "/i"]
+            .iter()
+            .any(|tag| r.inchi.contains(tag));
+        let charged = g.atoms.iter().any(|a| a.formal_charge != 0);
+        let multi = r.inchi[9..].split('/').next().unwrap().contains('.');
+        if !charged && !multi && !has_stereo_or_iso {
+            total_neutral_single += 1;
+        }
+        if has_stereo_or_iso {
+            continue; // v2
+        }
+        if let Ok(got) = molrs::inchi::to_inchi(&g) {
+            produced += 1;
+            if got == r.inchi {
+                ok += 1;
+            } else if mism.len() < 30 {
+                mism.push(format!("{} | got {got} | want {}", r.smiles, r.inchi));
+            }
+        }
+    }
+    let acc = ok as f64 / produced.max(1) as f64;
+    let cov = produced as f64 / total_neutral_single.max(1) as f64;
+    println!(
+        "full InChI: produced {produced}, {ok} exact ({:.2}%); coverage of neutral-single {produced}/{total_neutral_single} ({:.2}%)",
+        acc * 100.0,
+        cov * 100.0
+    );
+    for m in &mism {
+        println!("  MISMATCH {m}");
+    }
+    // I4 到達点 = 74.17% (v1 適用範囲 = 中性・単一成分・立体/同位体なし)。
+    // 残差の主因: 可動 H 認識の未整備 (アミド/アミジン/ラクタム/環 N-H
+    // 互変異性 — 逐次拡張) と一部の縮合環 c 層直列化。閾値は退行検知用。
+    assert!(acc >= 0.72, "full InChI accuracy {acc:.4} < 0.72");
 }
