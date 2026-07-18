@@ -1,5 +1,20 @@
 # SMILES → InChI / InChIKey (pure Rust) 実装計画
 
+> **v1 実装状況 (2026-07-19)**: I0–I5 実装済み。実測 (コーパス 7,453 分子、
+> RDKit オラクル):
+> - 式層 (Hill): 99.13% 一致 (残差は電荷正規化・有機金属切断)
+> - 正準番号 (AuxInfo /N:): **99.29%** 一致
+> - **InChIKey 機構** (`inchi_key_from_string` vs RDKit `InchiToInchiKey`,
+>   非立体 InChI 7,245 件): **7245/7245 = 完全一致**。SHA-256 (FIPS 180-4) +
+>   base-26 (`ikey_base26.c` 移植、除外トリプレット対応) は公式とビット一致
+> - フル InChI 文字列・InChIKey (v1 適用範囲 = 中性・単一成分・立体/同位体
+>   なし): **74.17%** が RDKit と完全一致
+> - CLI: `cargo run --bin inchi` (stdin SMILES → JSONL)
+> - v1 の非対応 (→ `Unsupported`): 電荷 (q/p 層)・多成分・立体 (b/t/m/s)・
+>   同位体 (i)・有機金属切断。残る文字列不一致の主因は可動 H 認識の未整備
+>   (アミド/アミジン/ラクタム/環 N-H) と一部の縮合環 c 層直列化 — 逐次拡張。
+
+
 関連文書: [RUST_PORT_HANDOFF.md](RUST_PORT_HANDOFF.md) (開発サイクル)、
 [RUST_3D_PLAN.md](RUST_3D_PLAN.md)・[RUST_2D_PLAN.md](RUST_2D_PLAN.md) (完了済み)。
 

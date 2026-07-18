@@ -9,10 +9,13 @@
 //! InChIKey は標準 InChI 文字列の SHA-256 ハッシュ (base-26 符号化) なので、
 //! 依存クレートゼロを保つため SHA-256 を自前実装している ([`sha256`])。
 
+pub mod base26;
 pub(crate) mod formula;
 pub(crate) mod layers;
 pub mod number;
 pub mod sha256;
+
+pub use base26::inchi_key_from_string;
 
 use crate::graph::MoleculeGraph;
 
@@ -79,6 +82,18 @@ pub fn inchi_of(smiles: &str) -> Result<String, InchiError> {
     let g = crate::graph::build_molecule_graph(smiles)
         .map_err(|e| InchiError::InvalidSmiles(e.to_string()))?;
     to_inchi(&g)
+}
+
+/// 分子グラフの InChIKey を生成する (I5、v1 範囲)。
+pub fn to_inchi_key(g: &MoleculeGraph) -> Result<String, InchiError> {
+    let inchi = to_inchi(g)?;
+    Ok(inchi_key_from_string(&inchi))
+}
+
+/// SMILES から InChIKey を生成する便利関数。
+pub fn inchi_key_of(smiles: &str) -> Result<String, InchiError> {
+    let inchi = inchi_of(smiles)?;
+    Ok(inchi_key_from_string(&inchi))
 }
 
 #[cfg(test)]

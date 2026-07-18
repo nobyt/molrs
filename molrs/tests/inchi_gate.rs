@@ -18,6 +18,7 @@ struct Record {
     formula: String,
     numbering: Vec<Vec<usize>>,
     inchi: String,
+    key: String,
 }
 
 fn load_fixture() -> Vec<Record> {
@@ -52,6 +53,7 @@ fn load_fixture() -> Vec<Record> {
                 formula: v["formula"].as_str().unwrap_or("").to_string(),
                 numbering,
                 inchi: v["inchi"].as_str().unwrap_or("").to_string(),
+                key: v["key"].as_str().unwrap_or("").to_string(),
             }
         })
         .collect()
@@ -176,4 +178,74 @@ fn full_inchi_matches_rdkit_where_produced() {
     // 残差の主因: 可動 H 認識の未整備 (アミド/アミジン/ラクタム/環 N-H
     // 互変異性 — 逐次拡張) と一部の縮合環 c 層直列化。閾値は退行検知用。
     assert!(acc >= 0.72, "full InChI accuracy {acc:.4} < 0.72");
+}
+
+#[test]
+fn inchi_key_from_string_matches_rdkit() {
+    // キー機構の独立検証: RDKit の InChI 文字列 → キーが RDKit の
+    // InchiToInchiKey と一致すること (立体/同位体を含む minor は v2 のため除外)。
+    let recs = load_fixture();
+    let mut n = 0usize;
+    let mut ok = 0usize;
+    let mut mism: Vec<String> = Vec::new();
+    for r in &recs {
+        if r.inchi.is_empty() || r.key.is_empty() {
+            continue;
+        }
+        // minor 層 (立体/同位体) を含む InChI は minor 文字列構成が未対応 (v2)
+        let has_minor = ["/b", "/t", "/m", "/s", "/i"]
+            .iter()
+            .any(|t| r.inchi.contains(t));
+        if has_minor {
+            continue;
+        }
+        n += 1;
+        let got = molrs::inchi::inchi_key_from_string(&r.inchi);
+        if got == r.key {
+            ok += 1;
+        } else if mism.len() < 20 {
+            mism.push(format!("{} | got {got} | want {}", r.inchi, r.key));
+        }
+    }
+    println!("inchi_key_from_string: {ok}/{n} match",);
+    for m in &mism {
+        println!("  MISMATCH {m}");
+    }
+    // 非立体 InChI ではキー機構は完全一致すべき
+    assert_eq!(ok, n, "key machinery must be exact on non-stereo InChI");
+}
+
+#[test]
+fn to_inchi_key_matches_rdkit_where_produced() {
+    // エンドツーエンド: to_inchi_key が v1 範囲で RDKit MolToInchiKey と一致。
+    let recs = load_fixture();
+    let mut produced = 0usize;
+    let mut ok = 0usize;
+    for r in &recs {
+        if r.key.is_empty() {
+            continue;
+        }
+        let has_stereo_or_iso = ["/b", "/t", "/m", "/s", "/i"]
+            .iter()
+            .any(|t| r.inchi.contains(t));
+        if has_stereo_or_iso {
+            continue;
+        }
+        let Ok(g) = build_molecule_graph(&r.smiles) else {
+            continue;
+        };
+        if let Ok(got) = molrs::inchi::to_inchi_key(&g) {
+            produced += 1;
+            if got == r.key {
+                ok += 1;
+            }
+        }
+    }
+    let acc = ok as f64 / produced.max(1) as f64;
+    println!(
+        "to_inchi_key: produced {produced}, {ok} exact ({:.2}%)",
+        acc * 100.0
+    );
+    // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
+    assert!(acc >= 0.72, "to_inchi_key accuracy {acc:.4} < 0.72");
 }
