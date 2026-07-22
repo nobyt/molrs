@@ -46,11 +46,25 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
     let mut n_remove = 0i32;
     let mut q = 0i32;
 
+    // 隣接に逆符号の電荷を持つ原子 (イリド/N-オキシド/ニトロ/アジド等の
+    // 電荷分離) はプロトン化しない — InChI は共有結合の中性形で扱う。
+    let has_opposite_charged_neighbor = |i: usize| {
+        let ci = g.atoms[i].formal_charge;
+        g.adjacency[i].iter().any(|&nb| {
+            (g.atoms[nb].formal_charge < 0) != (ci < 0) && g.atoms[nb].formal_charge != 0
+        })
+    };
+
     for i in 0..n_heavy {
         let a = &g.atoms[i];
         let h = cur_h(i);
         let ch = a.formal_charge as i32;
-        if ch < 0 && is_protonatable(&a.symbol) {
+        if ch != 0 && has_opposite_charged_neighbor(i) {
+            // 電荷分離 (ネット中性の zwitterion) → 触らない
+            final_h[i] = h;
+            new_charge[i] = a.formal_charge;
+            q += ch;
+        } else if ch < 0 && is_protonatable(&a.symbol) {
             // 負電荷 → プロトン付加で中性化
             let add = -ch;
             n_add += add;
