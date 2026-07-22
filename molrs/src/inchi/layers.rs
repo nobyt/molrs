@@ -25,13 +25,8 @@ pub(crate) struct Component {
 /// 分子を成分ごとに正準情報へ分解する。
 pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
     let tgroup = tautomer_group_members(g);
+    let all_groups = super::number::mobile_groups(g); // (端点原子, 可動 H 数)
     let numbering = canonical_numbering(g);
-    let heavy_deg = |i: usize| {
-        g.adjacency[i]
-            .iter()
-            .filter(|&&x| g.atoms[x].symbol != "H")
-            .count()
-    };
     let n_h_of = |i: usize| {
         g.adjacency[i]
             .iter()
@@ -68,8 +63,18 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
                     fixed_h[ci + 1] = n_h_of(orig);
                 }
             }
-            // 可動群: 同一中心に結合した t-group 端点をまとめる
-            let mobile = collect_mobile_groups(g, inv, &num, &tgroup, &heavy_deg, &n_h_of);
+            // 可動群 (成分内のもの) を canonical 番号列に変換
+            let mut mobile: Vec<(u8, Vec<usize>)> = all_groups
+                .iter()
+                .filter(|(eps, _)| eps.iter().all(|&e| num[e] != 0))
+                .map(|(eps, mh)| {
+                    let mut nums: Vec<usize> = eps.iter().map(|&e| num[e]).collect();
+                    nums.sort_unstable();
+                    (*mh, nums)
+                })
+                .collect();
+            // 出力順: 群の最小 canonical 番号昇順
+            mobile.sort_by_key(|(_, nums)| nums[0]);
 
             Component {
                 inv: inv.clone(),
@@ -80,52 +85,6 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
             }
         })
         .collect()
-}
-
-/// 可動 H 群を成分内で収集する。各群 = ある中心の t-group 端点集合。
-/// mobile H 数 = 端点上の H 総数 + 中和される負電荷数。
-fn collect_mobile_groups(
-    g: &MoleculeGraph,
-    inv: &[usize],
-    num: &[usize],
-    tgroup: &[bool],
-    heavy_deg: &impl Fn(usize) -> usize,
-    n_h_of: &impl Fn(usize) -> u8,
-) -> Vec<(u8, Vec<usize>)> {
-    let comp_set: std::collections::HashSet<usize> = inv.iter().copied().collect();
-    let mut groups: Vec<(u8, Vec<usize>)> = Vec::new();
-    let mut used = std::collections::HashSet::new();
-    // 中心をなめ、その t-group 端点をまとめる
-    for &center in inv {
-        let endpoints: Vec<usize> = g.adjacency[center]
-            .iter()
-            .copied()
-            .filter(|&nb| {
-                tgroup[nb]
-                    && comp_set.contains(&nb)
-                    && heavy_deg(nb) == 1
-                    && g.atoms[nb].symbol != "H"
-            })
-            .collect();
-        if endpoints.len() < 2 || endpoints.iter().any(|e| used.contains(e)) {
-            continue;
-        }
-        let n_hydro: u8 = endpoints.iter().map(|&e| n_h_of(e)).sum();
-        let n_neg = endpoints
-            .iter()
-            .filter(|&&e| g.atoms[e].formal_charge < 0)
-            .count() as u8;
-        let mobile_h = n_hydro + n_neg;
-        let mut nums: Vec<usize> = endpoints.iter().map(|&e| num[e]).collect();
-        nums.sort_unstable();
-        for &e in &endpoints {
-            used.insert(e);
-        }
-        groups.push((mobile_h, nums));
-    }
-    // 出力順: 群の最小 canonical 番号昇順
-    groups.sort_by_key(|(_, nums)| nums[0]);
-    groups
 }
 
 /// c 層の本体 (先頭の `c` は含めない)。単一成分。

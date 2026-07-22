@@ -74,58 +74,126 @@ struct NAtom {
     nbrs: Vec<usize>,
 }
 
-/// 可動 H 群 (標準互変異性の 1,3-シフト) のメンバー原子を検出する。
+fn is_hetero(sym: &str) -> bool {
+    matches!(sym, "O" | "S" | "Se" | "Te" | "N")
+}
+
+fn n_h_of(g: &MoleculeGraph, i: usize) -> usize {
+    g.adjacency[i]
+        .iter()
+        .filter(|&&x| g.atoms[x].symbol == "H")
+        .count()
+}
+
+/// 可動 H 群 (1,3-互変異性) を検出する。返り値は (端点原子集合, 可動 H 数)。
 ///
-/// v1 の規則: ある中心原子に結合した末端 (重原子次数 1) の O/S/Se/Te/N を
-/// 端点集合とし、端点が 2 個以上・二重結合端点が 1 個以上・(H を持つ端点
-/// または負電荷端点が 1 個以上) のとき、その端点集合を可動群とする。
-/// カルボキシル/スルホン酸/アミド/カルボキシラート/ニトロを覆う。
-/// 環内 (イミダゾール等) の長距離互変異性は未対応 (v2)。
-pub(crate) fn tautomer_group_members(g: &MoleculeGraph) -> Vec<bool> {
+/// 規則: ある中心原子に、ヘテロ原子 (O/S/Se/Te/N) が結合し、そのうち
+/// 少なくとも 1 つが二重結合 (受容体)、単結合のものは H を持つか負電荷
+/// (供与体) のとき、それらヘテロ原子端点で 1 群を作る。可動 H 数 = 端点上の
+/// H 総数 + 負電荷数。端点は末端でなくてよい (アミド/ラクタムの N は次数 2)。
+/// カルボン酸・スルホン酸・アミド・アミジン・グアニジン・尿素・ラクタムを覆う。
+/// 環内の長距離 (多中心) 互変異性は未対応 (v2)。
+pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     let n = g.atoms.len();
-    let mut member = vec![false; n];
+    let mut used = vec![false; n];
+    let mut groups: Vec<(Vec<usize>, u8)> = Vec::new();
+    let center_is_c = |c: usize| g.atoms[c].symbol == "C";
     let heavy_deg = |i: usize| {
         g.adjacency[i]
             .iter()
             .filter(|&&x| g.atoms[x].symbol != "H")
             .count()
     };
-    let n_h = |i: usize| {
-        g.adjacency[i]
-            .iter()
-            .filter(|&&x| g.atoms[x].symbol == "H")
-            .count()
-    };
     for center in 0..n {
         if g.atoms[center].symbol == "H" {
             continue;
         }
-        let mut endpoints = Vec::new();
+        // 中心の二重結合 O 数 (非炭素中心の N 端点可否に使う)
+        let n_double_o = g.adjacency[center]
+            .iter()
+            .filter(|&&nb| {
+                g.atoms[nb].symbol == "O"
+                    && g.bond_orders
+                        .get(&(center.min(nb), center.max(nb)))
+                        .copied()
+                        .unwrap_or(1.0)
+                        >= 2.0
+            })
+            .count();
+        // 中心に結合したヘテロ原子端点を分類 (受容体 = 二重結合、供与体 = H/負電荷)。
+        // N が端点になるのは中心が炭素、または (末端 N かつ 中心が
+        // スルホニル級 = 二重結合 O ≥2) のとき。一級スルホンアミド NH2 は
+        // 可動、二級・スルフィンアミドは非可動。
+        let mut endpoints: Vec<usize> = Vec::new();
+        let mut has_double = false;
         for &nb in &g.adjacency[center] {
             let sym = g.atoms[nb].symbol.as_str();
-            if matches!(sym, "O" | "S" | "Se" | "Te" | "N") && heavy_deg(nb) == 1 {
+            if !is_hetero(sym) {
+                continue;
+            }
+            if sym == "N" && !center_is_c(center) && !(heavy_deg(nb) == 1 && n_double_o >= 2) {
+                continue;
+            }
+            let key = (center.min(nb), center.max(nb));
+            let bo = g.bond_orders.get(&key).copied().unwrap_or(1.0);
+            if bo >= 2.0 {
+                endpoints.push(nb);
+                has_double = true;
+            } else if n_h_of(g, nb) >= 1 || g.atoms[nb].formal_charge < 0 {
                 endpoints.push(nb);
             }
         }
-        if endpoints.len() < 2 {
+        if !has_double || endpoints.len() < 2 {
             continue;
         }
-        let n_double = endpoints
+        // O/S 端点だけで酸系 (二重 O/S ≥1 かつ 供与体 O/S ≥1) を成すなら、
+        // N を除外して酸のみを群とする (カルバミン酸は O,O のみで N は固定)。
+        let os_ep: Vec<usize> = endpoints
             .iter()
-            .filter(|&&e| {
-                let key = (center.min(e), center.max(e));
-                g.bond_orders.get(&key).copied().unwrap_or(1.0) >= 2.0
-            })
-            .count();
-        let n_hydrogens: usize = endpoints.iter().map(|&e| n_h(e)).sum();
-        let n_neg = endpoints
+            .copied()
+            .filter(|&e| g.atoms[e].symbol != "N")
+            .collect();
+        let os_double = os_ep.iter().any(|&e| {
+            let key = (center.min(e), center.max(e));
+            g.bond_orders.get(&key).copied().unwrap_or(1.0) >= 2.0
+        });
+        let os_donor = os_ep
+            .iter()
+            .any(|&e| n_h_of(g, e) >= 1 || g.atoms[e].formal_charge < 0);
+        let chosen: Vec<usize> = if os_double && os_donor && os_ep.len() >= 2 {
+            os_ep
+        } else {
+            endpoints
+        };
+        if chosen.len() < 2 {
+            continue;
+        }
+        let total_h: usize = chosen.iter().map(|&e| n_h_of(g, e)).sum();
+        let total_neg = chosen
             .iter()
             .filter(|&&e| g.atoms[e].formal_charge < 0)
             .count();
-        if n_double >= 1 && (n_hydrogens >= 1 || n_neg >= 1) {
-            for &e in &endpoints {
-                member[e] = true;
-            }
+        if total_h + total_neg == 0 {
+            continue;
+        }
+        if chosen.iter().any(|&e| used[e]) {
+            continue;
+        }
+        for &e in &chosen {
+            used[e] = true;
+        }
+        groups.push((chosen, (total_h + total_neg) as u8));
+    }
+    groups
+}
+
+/// 可動 H 群のメンバー原子の bool マップ (番号付けの等価化に使う)。
+pub(crate) fn tautomer_group_members(g: &MoleculeGraph) -> Vec<bool> {
+    let n = g.atoms.len();
+    let mut member = vec![false; n];
+    for (eps, _) in mobile_groups(g) {
+        for e in eps {
+            member[e] = true;
         }
     }
     member
