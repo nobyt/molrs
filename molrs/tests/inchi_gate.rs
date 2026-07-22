@@ -175,7 +175,7 @@ fn full_inchi_matches_rdkit_where_produced() {
     // I4 到達点 = 74.17% (v1 適用範囲 = 中性・単一成分・立体/同位体なし)。
     // 残差の主因: 可動 H 認識の未整備 (アミド/アミジン/ラクタム/環 N-H
     // 互変異性 — 逐次拡張) と一部の縮合環 c 層直列化。閾値は退行検知用。
-    assert!(acc >= 0.77, "full InChI accuracy {acc:.4} < 0.72");
+    assert!(acc >= 0.785, "full InChI accuracy {acc:.4} < 0.72");
 }
 
 #[test]
@@ -245,5 +245,5 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.77, "to_inchi_key accuracy {acc:.4} < 0.72");
+    assert!(acc >= 0.78, "to_inchi_key accuracy {acc:.4} < 0.72");
 }

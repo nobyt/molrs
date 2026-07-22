@@ -12,6 +12,7 @@
 pub mod base26;
 pub(crate) mod formula;
 pub(crate) mod layers;
+pub(crate) mod normalize;
 pub mod number;
 pub mod sha256;
 pub(crate) mod stereo;
@@ -45,21 +46,18 @@ pub fn formula(g: &MoleculeGraph) -> String {
     formula::formula_layer(g)
 }
 
-/// 標準 InChI (`InChI=1S/…`) を生成する (I4、v1 範囲)。
+/// 標準 InChI (`InChI=1S/…`) を生成する (v1 範囲)。
 ///
-/// v1 は単一成分・中性 (電荷 q/p・立体・同位体・多成分・有機金属は未対応)。
-/// 適用範囲外は [`InchiError::Unsupported`] を返す。
+/// v1 は単一成分。電荷は q/p 層で中性化して扱う。多成分・同位体・有機金属・
+/// 多中心の環互変異性は未対応で [`InchiError::Unsupported`] を返す。
 pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
+    // 電荷正規化 (負の酸点を中性化・陽イオンを脱プロトン、残余 → q、移動 → p)
+    let (ng, q, p) = normalize::neutralize(g);
+    let g = &ng;
+
     let comps = layers::build_components(g);
     if comps.len() != 1 {
         return Err(InchiError::Unsupported("multi-component (v2)".into()));
-    }
-    // 電荷を持つ分子は q/p 層が要る (v1 未対応)。可動群で中和される
-    // 負電荷は許容 (p 層は今後)。ここでは全原子中性のみ通す。
-    if g.atoms.iter().any(|a| a.formal_charge != 0) {
-        return Err(InchiError::Unsupported(
-            "charged (q/p layer pending)".into(),
-        ));
     }
 
     let formula = formula::formula_layer(g);
@@ -76,6 +74,13 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     if !h.is_empty() {
         out.push_str("/h");
         out.push_str(&h);
+    }
+    // 電荷層 (h の後、立体の前): /q 残余電荷、/p プロトン化
+    if q != 0 {
+        out.push_str(&format!("/q{q:+}"));
+    }
+    if p != 0 {
+        out.push_str(&format!("/p{p:+}"));
     }
     // 立体層 (順序: b, t, m, s)
     if !b.is_empty() {

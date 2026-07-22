@@ -141,25 +141,10 @@ pub(crate) fn connection_layer(comp: &Component) -> String {
         }
     }
 
-    // 各ノードが後退辺を持つか (出力上の「純末端」判定に使う)。
-    // 純末端 = 木の子なし かつ 後退辺なし → カンマ結合してよい。
-    let mut has_back = vec![false; n + 1];
-    for c in 1..=n {
-        if discovery[c] == usize::MAX {
-            continue;
-        }
-        has_back[c] = comp.adj[c]
-            .iter()
-            .any(|&x| x != parent[c] && !children[c].contains(&x) && discovery[x] < discovery[c]);
-    }
-    let terminal: Vec<bool> = (0..=n)
-        .map(|c| c >= 1 && c <= n && children[c].is_empty() && !has_back[c])
-        .collect();
-
     // (2) 直列化
     let mut out = start.to_string();
     serialize_node(
-        comp, start, &discovery, &parent, &children, &subtree, &terminal, &mut out,
+        comp, start, &discovery, &parent, &children, &subtree, &mut out,
     );
     out
 }
@@ -172,7 +157,6 @@ fn serialize_node(
     parent: &[usize],
     children: &[Vec<usize>],
     subtree: &[usize],
-    terminal: &[bool],
     out: &mut String,
 ) {
     // 後退辺: 親でも木の子でもない隣接で、より早く発見された相手 (a 側で 1 度)
@@ -186,67 +170,49 @@ fn serialize_node(
     let mut kids = children[a].clone();
     kids.sort_by_key(|&c| (subtree[c], c));
 
-    // インラインは最後の 1 個 (子があれば最大部分木の子、なければ最後の後退辺)
-    let inline_child = kids.pop(); // None なら子なし
-    let mut prev_was_paren = false;
-
-    // 後退辺: 葉 (子なし) なのでまとめて 1 つのカンマ括弧にする
-    // (子がインラインになる場合)。後退辺のみで子がないときは最後をインライン。
-    let inline_back = if inline_child.is_none() {
-        back.pop()
-    } else {
-        None
+    // 全項目 = 後退辺 (葉、昇順) ++ 木の子 (部分木/番号昇順)。
+    // 最後の 1 個をインライン、それ以外は 1 つのカンマ括弧に入れる
+    // (各項目は自身の部分木も直列化する。例: 四級 N の (6-2,7-3)8-4)。
+    #[derive(Clone, Copy)]
+    enum Item {
+        Back(usize),
+        Child(usize),
+    }
+    let mut items: Vec<Item> = Vec::new();
+    for &b in &back {
+        items.push(Item::Back(b));
+    }
+    for &c in &kids {
+        items.push(Item::Child(c));
+    }
+    let Some(inline) = items.pop() else {
+        return;
     };
-    if !back.is_empty() {
-        out.push('(');
-        out.push_str(
-            &back
-                .iter()
-                .map(|b| b.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-        );
-        out.push(')');
-        prev_was_paren = true;
-    }
 
-    // 残りの子 (インライン以外): 純末端 (木の子も後退辺もなし) は 1 つの
-    // カンマ括弧に統合、それ以外は各自の括弧で再帰。純末端を先に。
-    let leaves: Vec<usize> = kids.iter().copied().filter(|&c| terminal[c]).collect();
-    let branches: Vec<usize> = kids.iter().copied().filter(|&c| !terminal[c]).collect();
-    if !leaves.is_empty() {
-        out.push('(');
-        out.push_str(
-            &leaves
-                .iter()
-                .map(|c| c.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-        );
-        out.push(')');
-        prev_was_paren = true;
-    }
-    for &c in &branches {
-        out.push('(');
-        out.push_str(&c.to_string());
-        serialize_node(comp, c, discovery, parent, children, subtree, terminal, out);
-        out.push(')');
-        prev_was_paren = true;
-    }
+    let render = |out: &mut String, it: Item| match it {
+        Item::Back(b) => out.push_str(&b.to_string()),
+        Item::Child(c) => {
+            out.push_str(&c.to_string());
+            serialize_node(comp, c, discovery, parent, children, subtree, out);
+        }
+    };
 
-    // インライン (最後)
-    if let Some(c) = inline_child {
-        if !prev_was_paren {
-            out.push('-');
+    let mut prev_was_paren = false;
+    if !items.is_empty() {
+        out.push('(');
+        for (k, &it) in items.iter().enumerate() {
+            if k > 0 {
+                out.push(',');
+            }
+            render(out, it);
         }
-        out.push_str(&c.to_string());
-        serialize_node(comp, c, discovery, parent, children, subtree, terminal, out);
-    } else if let Some(b) = inline_back {
-        if !prev_was_paren {
-            out.push('-');
-        }
-        out.push_str(&b.to_string());
+        out.push(')');
+        prev_was_paren = true;
     }
+    if !prev_was_paren {
+        out.push('-');
+    }
+    render(out, inline);
 }
 
 /// h 層の本体 (先頭の `h` は含めない)。単一成分。
@@ -270,7 +236,10 @@ pub(crate) fn hydrogen_layer(comp: &Component) -> String {
             parts.push(format!("{list}H{count}"));
         }
     }
-    // 可動群
+    // 固定 H 部はカンマ結合
+    let fixed = parts.join(",");
+    // 可動群はカンマなしで連結 ((H,5,6)(H,7,8))。固定部との間にはカンマ。
+    let mut mobile = String::new();
     for (mh, nums) in &comp.mobile {
         let list = nums
             .iter()
@@ -278,12 +247,17 @@ pub(crate) fn hydrogen_layer(comp: &Component) -> String {
             .collect::<Vec<_>>()
             .join(",");
         if *mh == 1 {
-            parts.push(format!("(H,{list})"));
+            mobile.push_str(&format!("(H,{list})"));
         } else {
-            parts.push(format!("(H{mh},{list})"));
+            mobile.push_str(&format!("(H{mh},{list})"));
         }
     }
-    parts.join(",")
+    match (fixed.is_empty(), mobile.is_empty()) {
+        (false, false) => format!("{fixed},{mobile}"),
+        (false, true) => fixed,
+        (true, false) => mobile,
+        (true, true) => String::new(),
+    }
 }
 
 /// 昇順の番号列を InChI の範囲表記に圧縮する (`1,2,3,5` → `1-3,5`)。
