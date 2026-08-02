@@ -172,11 +172,12 @@ fn full_inchi_matches_rdkit_where_produced() {
     for m in &mism {
         println!("  MISMATCH {m}");
     }
-    // I12 到達点 = 84.50% (v1 適用範囲 = 中性・単一成分・立体/同位体なし)。
-    // 残差の主因: 芳香環をまたぐ多中心互変異性 (アミノピリミジン・ウラシル系
-    // ジオン・プリン様縮合環 — 単一中心の星型検出では届かない、環全体の
-    // 交互結合パス探索が必要) と一部の縮合環 c 層直列化。閾値は退行検知用。
-    assert!(acc >= 0.84, "full InChI accuracy {acc:.4} < 0.84");
+    // I13 到達点 = 89.11% (v1 適用範囲 = 中性・単一成分・立体/同位体なし)。
+    // 残差の主因: 縮合した 2 つの芳香ヘテロ環にまたがる互変異性 (インダゾール
+    // /アザインドール系で、単環ロックのブリッジ探索では正しい可否を判定
+    // できないケース — 本来は反転後も両環同時に有効な Kekule 構造が保てるか
+    // の同時検証が必要) と一部の縮合環 c 層直列化。閾値は退行検知用。
+    assert!(acc >= 0.89, "full InChI accuracy {acc:.4} < 0.89");
 }
 
 #[test]
@@ -246,5 +247,5 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.84, "to_inchi_key accuracy {acc:.4} < 0.84");
+    assert!(acc >= 0.89, "to_inchi_key accuracy {acc:.4} < 0.89");
 }

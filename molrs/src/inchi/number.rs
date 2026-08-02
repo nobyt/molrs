@@ -97,20 +97,60 @@ fn kekule_order_map(g: &MoleculeGraph) -> std::collections::HashMap<(usize, usiz
     m
 }
 
-/// 可動 H 群 (1,3-互変異性) を検出する。返り値は (端点原子集合, 可動 H 数)。
+/// 単純な union-find (可動 H 群のブリッジ統合、I13 で使用)。
+struct UnionFind {
+    parent: Vec<usize>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        UnionFind {
+            parent: (0..n).collect(),
+        }
+    }
+    fn find(&mut self, x: usize) -> usize {
+        if self.parent[x] != x {
+            self.parent[x] = self.find(self.parent[x]);
+        }
+        self.parent[x]
+    }
+    fn union(&mut self, a: usize, b: usize) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra != rb {
+            self.parent[ra] = rb;
+        }
+    }
+}
+
+/// 中心原子 1 個の直接ヘテロ端点から「種」となる可動 H 群を検出する
+/// (旧 I9 アルゴリズム本体)。返り値は (種群のリスト, 意図的除外された原子)。
+/// 可動 H 数は [`mobile_groups`] 側で統合後にまとめて計算する。
 ///
 /// 規則: ある中心原子に、ヘテロ原子 (O/S/Se/Te/N) が結合し、そのうち
 /// 少なくとも 1 つが二重結合 (受容体)、単結合のものは H を持つか負電荷
-/// (供与体) のとき、それらヘテロ原子端点で 1 群を作る。可動 H 数 = 端点上の
-/// H 総数 + 負電荷数。端点は末端でなくてよい (アミド/ラクタムの N は次数 2)。
-/// カルボン酸・スルホン酸・アミド・アミジン・グアニジン・尿素・ラクタムを覆う。
-/// 環内の長距離 (多中心) 互変異性は未対応 (v2)。
-pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
+/// (供与体) のとき、それらヘテロ原子端点で 1 群を作る。端点は末端でなくて
+/// よい (アミド/ラクタムの N は次数 2)。カルボン酸・スルホン酸・アミド・
+/// アミジン・グアニジン・尿素・ラクタムを覆う。
+///
+/// 2 番目の返り値「意図的除外」は、ある中心で有効な多端点候補
+/// (endpoints.len()>=2 && has_double) が成立したにもかかわらず、酸除外規則
+/// (カルバミン酸の N 等) で `chosen` から落とされた原子。[`mobile_groups`]
+/// はこれらを孤立供与体としてブリッジ探索の起点に**しない** (探索すると
+/// 除外規則を回避して間接的に元の酸素対と再結合してしまうため)。単に
+/// どの中心の候補にもならなかった原子 (トリアゾール環の中心 N など) は
+/// ここに含まれず、孤立供与体として正常にブリッジ探索の起点になる。
+fn seed_groups(
+    g: &MoleculeGraph,
+    kekule: &std::collections::HashMap<(usize, usize), f64>,
+) -> (Vec<Vec<usize>>, std::collections::HashSet<usize>) {
     let n = g.atoms.len();
     let mut used = vec![false; n];
-    let mut groups: Vec<(Vec<usize>, u8)> = Vec::new();
-    let kekule = kekule_order_map(g);
-    let center_is_c = |c: usize| g.atoms[c].symbol == "C";
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut excluded: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // N=N-N(H)- (トリアゾール/テトラゾール環) のように中心自体が N のことも
+    // ある。この場合も N 端点を許す (中心が O/S のような組み合わせは想定外
+    // なので許可しない)。
+    let center_is_c_or_n = |c: usize| matches!(g.atoms[c].symbol.as_str(), "C" | "N");
     let heavy_deg = |i: usize| {
         g.adjacency[i]
             .iter()
@@ -134,9 +174,10 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             })
             .count();
         // 中心に結合したヘテロ原子端点を分類 (受容体 = 二重結合、供与体 = H/負電荷)。
-        // N が端点になるのは中心が炭素、または (末端 N かつ 中心が
-        // スルホニル級 = 二重結合 O ≥2) のとき。一級スルホンアミド NH2 は
-        // 可動、二級・スルフィンアミドは非可動。
+        // N が端点になるのは中心が炭素・N (トリアゾール/テトラゾールの
+        // N=N-N(H)- 等)、または (末端 N かつ 中心が二重結合 O ≥2 = スルホニル
+        // 級) のとき。一級スルホンアミド NH2 は可動、二級・スルフィンアミドは
+        // 非可動。
         let mut endpoints: Vec<usize> = Vec::new();
         let mut has_double = false;
         for &nb in &g.adjacency[center] {
@@ -144,7 +185,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             if !is_hetero(sym) {
                 continue;
             }
-            if sym == "N" && !center_is_c(center) && !(heavy_deg(nb) == 1 && n_double_o >= 2) {
+            if sym == "N" && !center_is_c_or_n(center) && !(heavy_deg(nb) == 1 && n_double_o >= 2) {
                 continue;
             }
             let key = (center.min(nb), center.max(nb));
@@ -174,6 +215,11 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             .iter()
             .any(|&e| n_h_of(g, e) >= 1 || g.atoms[e].formal_charge < 0);
         let chosen: Vec<usize> = if os_double && os_donor && os_ep.len() >= 2 {
+            for &e in &endpoints {
+                if !os_ep.contains(&e) {
+                    excluded.insert(e);
+                }
+            }
             os_ep
         } else {
             endpoints
@@ -195,8 +241,170 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
         for &e in &chosen {
             used[e] = true;
         }
-        groups.push((chosen, (total_h + total_neg) as u8));
+        groups.push(chosen);
     }
+    (groups, excluded)
+}
+
+/// 可動 H 群 (互変異性) を検出する。返り値は (端点原子集合, 可動 H 数)。
+///
+/// I9 (単一中心の星型検出、[`seed_groups`]) に加え、I13 で環をまたぐ多中心の
+/// 互変異性も扱う。芳香環の Kekule 構造を「マッチング」とみなし、各種の
+/// 端点から「自由結合 → その先の原子の二重結合 (マッチング辺) で反転」を
+/// 繰り返す交互パス探索 (augmenting path の考え方) で到達できるヘテロ原子を
+/// 同一群に統合する (union-find)。種となる星型群の間で共有端点が生じる場合
+/// (例: キナゾリンジオンの尿素型中心が隣の中心とヘテロ原子を共有) や、
+/// 芳香環越しにしか繋がらない場合 (例: 2-アミノピリミジンの環 N 同士、
+/// ピリジン置換アミドの環 N とカルボニル O) の双方をこの 1 パスで扱う。
+/// カルバミン酸系 (O,O 酸対に対して N を除外する規則) 等、種の段階での
+/// 除外はそのままブリッジ探索にも伝播する (除外された N は種のどのメンバー
+/// からも「自由辺→マッチング辺」の 1 ステップでは到達できないため)。
+pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
+    let n = g.atoms.len();
+    let kekule = kekule_order_map(g);
+    let (seeds, excluded) = seed_groups(g, &kekule);
+
+    let match_of = |a: usize| -> Option<usize> {
+        g.adjacency[a].iter().copied().find(|&b| {
+            g.atoms[b].symbol != "H"
+                && kekule.get(&(a.min(b), a.max(b))).copied().unwrap_or(1.0) >= 2.0
+        })
+    };
+    // 単一環にロックした探索: ある環に入ったブリッジ探索はその環の辺だけを
+    // 辿る (環に属する原子が単一の環にのみ属する間)。インダゾール/
+    // アザインドール等、縮合した 2 芳香環越しにピロール型 N-H とピリジン型
+    // N が単純な交互パスで繋がって見えても、実際には両環同時にケクレ構造を
+    // 崩す必要があり単一の交互パスでは表現できないため、縮環の共有原子で
+    // 別の環に「乗り換える」誤検出を防ぐ。ロックは環外に出た時点で解除され、
+    // 別の環に再度ロックし直せる (ピリジン置換アミドの環外カルボニルの
+    // ように、環の外の断片を経由すること自体は許す)。
+    let lock_of = |atom: usize| -> Option<usize> {
+        let rings: Vec<usize> = g
+            .ring_atom_sets
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.contains(&atom))
+            .map(|(i, _)| i)
+            .collect();
+        if rings.len() == 1 {
+            Some(rings[0])
+        } else {
+            None
+        }
+    };
+
+    let mut uf = UnionFind::new(n);
+    let mut visited = vec![false; n];
+    let mut queue: std::collections::VecDeque<(usize, Option<usize>)> =
+        std::collections::VecDeque::new();
+    for grp in &seeds {
+        for &m in &grp[1..] {
+            uf.union(grp[0], m);
+        }
+        for &m in grp {
+            if !visited[m] {
+                visited[m] = true;
+                queue.push_back((m, lock_of(m)));
+            }
+        }
+    }
+    // 孤立供与体 (どの中心の候補にもならなかった H/負電荷ヘテロ原子、例:
+    // トリアゾール環の中心 N や環外アミノ基の N) もブリッジ探索の起点に
+    // 加える。ただし `excluded` (酸除外規則で意図的に落とされた原子) は除く。
+    // 非芳香族の環メンバーは除外する (ジヒドロピリジン環の N-H のように
+    // 環内で隣の芳香環に単結合している場合でも、非芳香族環自体のメンバー
+    // としては可動 H 対象にならない — 環外の -NH- 置換基や芳香環自身の
+    // ヘテロ原子とは扱いが異なる)。中継原子側の芳香族性要求 (下のループ)
+    // と合わせて、二級スルホンアミド N 等の孤立鎖越しの誤統合も防ぐ。
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..n {
+        if excluded.contains(&i) || visited[i] {
+            continue;
+        }
+        let a = &g.atoms[i];
+        if a.in_ring && !a.is_aromatic {
+            continue;
+        }
+        if is_hetero(a.symbol.as_str()) && (n_h_of(g, i) >= 1 || a.formal_charge < 0) {
+            visited[i] = true;
+            queue.push_back((i, lock_of(i)));
+        }
+    }
+    while let Some((a, ctx)) = queue.pop_front() {
+        for &b in &g.adjacency[a] {
+            if g.atoms[b].symbol == "H" {
+                continue;
+            }
+            // 中継原子 b は芳香環内に限定 (孤立アルケンやスルホニル中心越しの
+            // 橋渡しを防ぐ)。これが二級スルホンアミド N やジヒドロピリジン
+            // 環 N-H を誤って可動化しない歯止めになる。
+            if !g.atoms[b].is_aromatic {
+                continue;
+            }
+            // ロック中の環がある場合、その環の原子でなければ辿らない
+            // (縮環の共有原子から別環へ抜けるのを防ぐ)。
+            if let Some(r) = ctx {
+                if !g.ring_atom_sets[r].contains(&b) {
+                    continue;
+                }
+            }
+            let key = (a.min(b), a.max(b));
+            let bo = kekule.get(&key).copied().unwrap_or(1.0);
+            if bo >= 2.0 {
+                continue; // a から b へは自由 (単) 結合でなければ反転できない
+            }
+            let Some(c) = match_of(b) else { continue };
+            if c == a {
+                continue;
+            }
+            // ロック中の環がある場合、c が環内原子なら「同じ環」でなければ
+            // ならない (別の縮環に属する c への抜けを防ぐ)。c が環外の原子
+            // (エキソサイクリックな =O 等) なら許す — これは縮環越えではなく
+            // 単に環の外に出る操作。
+            if let Some(r) = ctx {
+                if g.atoms[c].in_ring && !g.ring_atom_sets[r].contains(&c) {
+                    continue;
+                }
+            }
+            uf.union(a, c);
+            let c_ctx = match ctx {
+                Some(r) if g.ring_atom_sets[r].contains(&c) => Some(r),
+                Some(_) => None, // 環外の原子に抜けた (エキソサイクリック =O 等) → ロック解除
+                None => lock_of(c),
+            };
+            if !visited[c] {
+                visited[c] = true;
+                queue.push_back((c, c_ctx));
+            }
+        }
+    }
+
+    // 統合後の成分ごとにヘテロ原子端点のみを集約 (炭素は経路の中継のみ)。
+    let mut by_root: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..n {
+        if visited[i] && is_hetero(g.atoms[i].symbol.as_str()) {
+            by_root.entry(uf.find(i)).or_default().push(i);
+        }
+    }
+    let mut groups: Vec<(Vec<usize>, u8)> = Vec::new();
+    for (_, mut members) in by_root {
+        if members.len() < 2 {
+            continue;
+        }
+        members.sort_unstable();
+        let total_h: usize = members.iter().map(|&e| n_h_of(g, e)).sum();
+        let total_neg = members
+            .iter()
+            .filter(|&&e| g.atoms[e].formal_charge < 0)
+            .count();
+        if total_h + total_neg == 0 {
+            continue;
+        }
+        groups.push((members, (total_h + total_neg) as u8));
+    }
+    groups.sort_by_key(|(m, _)| m[0]);
     groups
 }
 
@@ -478,6 +686,58 @@ mod tests {
         for &e in &groups[0].0 {
             assert_eq!(g.atoms[e].symbol, "N");
         }
+    }
+
+    #[test]
+    fn mobile_h_bridges_through_aromatic_ring() {
+        // I13: 単一中心の星型検出では届かない、芳香環越しの多中心互変異性。
+        // ピリジン置換アミド: アミド N-H が環を挟んで対側のピリジン N まで
+        // 到達し、カルボニル O・アミド N・環 N の 3 端点 1 群になるべき。
+        let g = build_molecule_graph("CC(=O)Nc1ccncc1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, 1);
+        assert_eq!(groups[0].0.len(), 3);
+
+        // 2-アミノピリミジン: 環外アミノ N (孤立供与体) から環の両側の N まで
+        // 橋渡しして 3 端点 1 群になるべき。
+        let g = build_molecule_graph("CNc1ncccn1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
+
+        // トリアゾール環 (中心原子自体が N): 3 つの環内 N が 1 群になるべき。
+        let g = build_molecule_graph("C1CCc2[nH]nnc2C1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
+    }
+
+    #[test]
+    fn mobile_h_does_not_over_bridge() {
+        // 二級スルホンアミド N は非可動 (孤立鎖越しに他の中心と誤結合しない)。
+        let g = build_molecule_graph("CNS(=O)(=O)C").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+
+        // カルバミン酸: O,O 対のみが可動群になり、置換 N は含まれない。
+        let g = build_molecule_graph("CNC(=O)O").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+        for &e in &groups[0].0 {
+            assert_eq!(g.atoms[e].symbol, "O");
+        }
+
+        // 非芳香族環 (ジヒドロピリジン部分) の N-H は、隣接する芳香族ピリジン
+        // 環に単結合しているだけでは可動化しない。
+        let g = build_molecule_graph("C1=Cc2ccncc2CN1").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+
+        // 縮環 (インダゾール型) はケクレ構造が単一の交互パスで両環に
+        // またがれないため、ピロール型 N-H は縮環越しにピリジン型 N まで
+        // 到達しない。
+        let g = build_molecule_graph("Cc1c[nH]c2cccnc12").unwrap();
+        assert!(mobile_groups(&g).is_empty());
     }
 
     #[test]
