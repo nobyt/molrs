@@ -10,6 +10,7 @@
 //! 依存クレートゼロを保つため SHA-256 を自前実装している ([`sha256`])。
 
 pub mod base26;
+pub(crate) mod blossom;
 pub(crate) mod formula;
 pub(crate) mod layers;
 pub(crate) mod normalize;
