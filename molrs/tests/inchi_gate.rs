@@ -172,10 +172,11 @@ fn full_inchi_matches_rdkit_where_produced() {
     for m in &mism {
         println!("  MISMATCH {m}");
     }
-    // I4 到達点 = 74.17% (v1 適用範囲 = 中性・単一成分・立体/同位体なし)。
-    // 残差の主因: 可動 H 認識の未整備 (アミド/アミジン/ラクタム/環 N-H
-    // 互変異性 — 逐次拡張) と一部の縮合環 c 層直列化。閾値は退行検知用。
-    assert!(acc >= 0.79, "full InChI accuracy {acc:.4} < 0.72");
+    // I12 到達点 = 84.50% (v1 適用範囲 = 中性・単一成分・立体/同位体なし)。
+    // 残差の主因: 芳香環をまたぐ多中心互変異性 (アミノピリミジン・ウラシル系
+    // ジオン・プリン様縮合環 — 単一中心の星型検出では届かない、環全体の
+    // 交互結合パス探索が必要) と一部の縮合環 c 層直列化。閾値は退行検知用。
+    assert!(acc >= 0.84, "full InChI accuracy {acc:.4} < 0.84");
 }
 
 #[test]
@@ -245,5 +246,5 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.79, "to_inchi_key accuracy {acc:.4} < 0.72");
+    assert!(acc >= 0.84, "to_inchi_key accuracy {acc:.4} < 0.84");
 }

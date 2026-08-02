@@ -85,6 +85,18 @@ fn n_h_of(g: &MoleculeGraph, i: usize) -> usize {
         .count()
 }
 
+/// Kekule 化済みの結合次数 (芳香族結合も 1/2 の実値。`g.bond_orders` は
+/// 芳香族を 1.5 で保持するため、可動 H 判定 (二重結合受容体の検出) には
+/// こちらを使う)。
+fn kekule_order_map(g: &MoleculeGraph) -> std::collections::HashMap<(usize, usize), f64> {
+    let mut m = std::collections::HashMap::with_capacity(g.bonds.len());
+    for (bi, b) in g.bonds.iter().enumerate() {
+        let key = (b.begin_idx.min(b.end_idx), b.begin_idx.max(b.end_idx));
+        m.insert(key, g.kekule_bond_orders[bi]);
+    }
+    m
+}
+
 /// 可動 H 群 (1,3-互変異性) を検出する。返り値は (端点原子集合, 可動 H 数)。
 ///
 /// 規則: ある中心原子に、ヘテロ原子 (O/S/Se/Te/N) が結合し、そのうち
@@ -97,6 +109,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     let n = g.atoms.len();
     let mut used = vec![false; n];
     let mut groups: Vec<(Vec<usize>, u8)> = Vec::new();
+    let kekule = kekule_order_map(g);
     let center_is_c = |c: usize| g.atoms[c].symbol == "C";
     let heavy_deg = |i: usize| {
         g.adjacency[i]
@@ -113,7 +126,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             .iter()
             .filter(|&&nb| {
                 g.atoms[nb].symbol == "O"
-                    && g.bond_orders
+                    && kekule
                         .get(&(center.min(nb), center.max(nb)))
                         .copied()
                         .unwrap_or(1.0)
@@ -135,7 +148,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
                 continue;
             }
             let key = (center.min(nb), center.max(nb));
-            let bo = g.bond_orders.get(&key).copied().unwrap_or(1.0);
+            let bo = kekule.get(&key).copied().unwrap_or(1.0);
             if bo >= 2.0 {
                 endpoints.push(nb);
                 has_double = true;
@@ -155,7 +168,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             .collect();
         let os_double = os_ep.iter().any(|&e| {
             let key = (center.min(e), center.max(e));
-            g.bond_orders.get(&key).copied().unwrap_or(1.0) >= 2.0
+            kekule.get(&key).copied().unwrap_or(1.0) >= 2.0
         });
         let os_donor = os_ep
             .iter()
@@ -449,6 +462,22 @@ mod tests {
         );
         // スルホン酸: 3 つの O が同一群
         assert_eq!(numbering_1based("CS(=O)(=O)O"), vec![vec![1, 3, 4, 5, 2]]);
+    }
+
+    #[test]
+    fn mobile_h_aromatic_ring() {
+        // 芳香族環 (Kekule 結合次数が bond_orders では 1.5 に潰れる) でも
+        // 可動 H 中心を検出できること (I12: kekule_bond_orders を使うよう修正)。
+        // 2-methyl-4,5,6,7-tetrahydro-1H-benzimidazole: 環内の N=C-N(H) が
+        // 芳香族認識されても中心 C の 2 ヘテロ端点として群になるべき。
+        let g = build_molecule_graph("CC1=NC2=C(N1)CCCC2").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, 1); // 可動 H 数 = 1
+        assert_eq!(groups[0].0.len(), 2); // 端点 = 環内 N 2 個
+        for &e in &groups[0].0 {
+            assert_eq!(g.atoms[e].symbol, "N");
+        }
     }
 
     #[test]
