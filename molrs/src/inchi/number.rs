@@ -158,8 +158,10 @@ fn is_acceptor_from(
     if g.atoms[nb].is_aromatic {
         is_acceptor_agg(g, kekule, nb)
     } else {
+        // 三重結合 (ニトリル等) は「二重結合を 1 本手放せる」受容体ではない
+        // ので、正確に二重結合 (次数 2) のときだけ受容体とみなす。
         let key = (center.min(nb), center.max(nb));
-        kekule.get(&key).copied().unwrap_or(1.0) >= 2.0
+        kekule.get(&key).copied().unwrap_or(1.0) == 2.0
     }
 }
 
@@ -210,7 +212,6 @@ fn seed_groups(
     kekule: &std::collections::HashMap<(usize, usize), f64>,
 ) -> (Vec<Vec<usize>>, std::collections::HashSet<usize>) {
     let n = g.atoms.len();
-    let mut used = vec![false; n];
     let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut excluded: std::collections::HashSet<usize> = std::collections::HashSet::new();
     // N=N-N(H)- (トリアゾール/テトラゾール環) のように中心自体が N のことも
@@ -236,7 +237,7 @@ fn seed_groups(
                         .get(&(center.min(nb), center.max(nb)))
                         .copied()
                         .unwrap_or(1.0)
-                        >= 2.0
+                        == 2.0
             })
             .count();
         // 中心に結合したヘテロ原子端点を分類 (受容体 = 二重結合、供与体 = H/負電荷)。
@@ -246,6 +247,13 @@ fn seed_groups(
         // 非可動。
         let mut endpoints: Vec<usize> = Vec::new();
         let mut has_double = false;
+        // 中心自身が「単結合で繋がる端点」を最低 1 つ持つこと。中心の全端点が
+        // (中心から見て) 実際に二重結合の場合 (例: N=C=N のような累積二重
+        // 結合の中心) は、各端点が芳香族の集約判定で「受容体」に見えても
+        // 単純な単結合↔二重結合の交換を表す星型パターンにならないため除外
+        // する (スルホン酸 S(=O)(=O)OH は S からの単結合が -OH に残っている
+        // ので該当しない)。
+        let mut has_single_from_center = false;
         for &nb in &g.adjacency[center] {
             let sym = g.atoms[nb].symbol.as_str();
             if !is_hetero(sym) {
@@ -254,6 +262,14 @@ fn seed_groups(
             if sym == "N" && !center_is_c_or_n(center) && !(heavy_deg(nb) == 1 && n_double_o >= 2) {
                 continue;
             }
+            let bond_from_center_is_double = kekule
+                .get(&(center.min(nb), center.max(nb)))
+                .copied()
+                .unwrap_or(1.0)
+                == 2.0;
+            if !bond_from_center_is_double {
+                has_single_from_center = true;
+            }
             if is_acceptor_from(g, kekule, center, nb) {
                 endpoints.push(nb);
                 has_double = true;
@@ -261,7 +277,7 @@ fn seed_groups(
                 endpoints.push(nb);
             }
         }
-        if !has_double || endpoints.len() < 2 {
+        if !has_double || !has_single_from_center || endpoints.len() < 2 {
             continue;
         }
         // O/S 端点だけで酸系 (二重 O/S ≥1 かつ 供与体 O/S ≥1) を成すなら、
@@ -296,12 +312,13 @@ fn seed_groups(
         // ブリッジ探索で後から合流し、最終的な群の妥当性判定
         // (`total_h + total_neg > 0`) は [`mobile_groups`] 側で全ブリッジ
         // 後にまとめて行う。
-        if chosen.iter().any(|&e| used[e]) {
-            continue;
-        }
-        for &e in &chosen {
-            used[e] = true;
-        }
+        //
+        // 複数の中心が端点を共有してもよい (例: 縮環の 2 つの共有原子が
+        // それぞれ別のヘテロ原子と直接隣接するとき、両方が独立した種を
+        // 形成し、共有する原子経由で [`mobile_groups`] の union-find が
+        // まとめて 1 つの群に統合する)。ここで早期に「既に使用済み」として
+        // 一方を弾くと、その中心のもう一方の端点が種にも孤立供与体にも
+        // ならず group から完全に脱落してしまう。
         groups.push(chosen);
     }
     (groups, excluded)
@@ -392,11 +409,15 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             .collect()
     };
 
-    // ブリッジ探索用グラフ: 分子結合のうち、少なくとも一方の端が芳香族の
-    // ものだけを辺として採用する (孤立アルケンやスルホニル中心越しの
-    // 橋渡しを防ぐ — 二級スルホンアミド N やジヒドロピリジン環 N-H を
-    // 誤って可動化しないための歯止め)。種メンバー (アミド N 等、非芳香族)
-    // から芳香環への入口はこの条件で自然に含まれる。
+    // ブリッジ探索用グラフ: 両端が芳香族の辺 (環内結合)、または片方が芳香族で
+    // もう片方がヘテロ原子の辺 (環とその環外ヘテロ端点、例: アミド N やケト
+    // 基の O) だけを採用する。孤立アルケンやスルホニル中心越しの橋渡しを
+    // 防ぐと同時に (二級スルホンアミド N やジヒドロピリジン環 N-H を誤って
+    // 可動化しない)、芳香環が「無関係な環外炭素」(例: カルボン酸の C) へ
+    // 逆向きに抜けてしまうのも防ぐ — 環外側がヘテロ原子でなければ、その先の
+    // 全く無関係な官能基 (別のヘテロ原子群) まで誤って橋渡ししてしまうため。
+    // 種メンバー (アミド N 等、非芳香族ヘテロ原子) から芳香環への入口は
+    // この条件で自然に含まれる。
     let mut graph = blossom::MatchGraph::new(vertex_atom.len());
     let mut matched: Vec<Option<usize>> = vec![None; vertex_atom.len()];
     for b in &g.bonds {
@@ -406,7 +427,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
         }
         let shared = shared_rings(u, v);
         let bo = kekule.get(&(u.min(v), u.max(v))).copied().unwrap_or(1.0);
-        if bo >= 2.0 {
+        if bo == 2.0 {
             // マッチ (二重結合) は共有環ごとの分身どうしを対応付ける
             // (縮環の共有辺なら両環の分身ペアそれぞれに設定)。
             if shared.is_empty() {
@@ -421,7 +442,13 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
                 }
             }
         }
-        if !(g.atoms[u].is_aromatic || g.atoms[v].is_aromatic) {
+        let edge_ok = match (g.atoms[u].is_aromatic, g.atoms[v].is_aromatic) {
+            (true, true) => true,
+            (true, false) => is_hetero(g.atoms[v].symbol.as_str()),
+            (false, true) => is_hetero(g.atoms[u].symbol.as_str()),
+            (false, false) => false,
+        };
+        if !edge_ok {
             continue;
         }
         if shared.is_empty() {
@@ -433,6 +460,40 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
         } else {
             for &r in &shared {
                 graph.add_edge(clone_in(u, r), clone_in(v, r));
+            }
+        }
+    }
+
+    // 縮環の共有原子は、実際の Kekule 二重結合が「別の」環に割り当たって
+    // いることがある (どちらの環が二重結合を「借りる」かは Kekule 化の
+    // 任意の選択に過ぎない)。この場合、その原子の「この環では」の分身は
+    // 二重結合を持たないように見えてしまい、環内のブロッサム探索がそこで
+    // 途切れる — 例えば環内の別のヘテロ原子 (トリアゾール/ピラゾール環の
+    // 「中心」寄りの N 等) がブリッジで正しく拾えなくなる。対処として、
+    // 同じ環内で隣接し合う「その環では二重結合を持たないが実際にはどこかに
+    // 二重結合を持つ」原子どうし (縮環の共有辺の両端であることが多い) を、
+    // その環内限定の仮想的なマッチとして対応付ける — 環自体は依然として
+    // 閉じた奇閉路として探索でき、ブロッサム収縮で環内の全ヘテロ原子が
+    // 正しく到達可能になる。実際の外側の環との接続は、共有原子のもう一方の
+    // 分身 (実結合が属する側) に既に正しく設定済みなので、こちらは変更しない。
+    let has_real_double = |a: usize| -> bool {
+        g.adjacency[a].iter().any(|&nb| {
+            g.atoms[nb].symbol != "H"
+                && kekule.get(&(a.min(nb), a.max(nb))).copied().unwrap_or(1.0) == 2.0
+        })
+    };
+    for (ri, ring) in g.ring_atom_sets.iter().enumerate() {
+        let orphans: Vec<usize> = ring
+            .iter()
+            .copied()
+            .filter(|&a| a < n && g.atoms[a].symbol != "H")
+            .filter(|&a| matched[clone_in(a, ri)].is_none() && has_real_double(a))
+            .collect();
+        if let [a, b] = orphans[..] {
+            if g.adjacency[a].contains(&b) {
+                let (ca, cb) = (clone_in(a, ri), clone_in(b, ri));
+                matched[ca] = Some(cb);
+                matched[cb] = Some(ca);
             }
         }
     }
@@ -456,6 +517,16 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     // 環内で隣の芳香環に単結合している場合でも、非芳香族環自体のメンバー
     // としては可動 H 対象にならない — 環外の -NH- 置換基や芳香環自身の
     // ヘテロ原子とは扱いが異なる)。
+    //
+    // 縮環系の橋頭ヘテロ原子 (例: インドリジン型の 3 配位 N で二重結合を
+    // 一切持たない) に隣接する環外ドナー (例: 縮環フェノール性 OH) は、
+    // 局所的な星型を作れない上、環全体の芳香族性が橋頭原子を介して両環に
+    // またがっているため単純な 1 環内の交互パスだけでは正しく判定できず、
+    // 無関係な環内ヘテロ原子まで誤って橋渡ししてしまうことがある。この
+    // ケースだけを狙い撃ちして環外ドナーの隣接原子が橋頭原子でなければ
+    // 除外する、といった安全な追加規則は未発見のため (単純な芳香環のみに
+    // 限定すると正当な環外アミノ基のケースまで壊れる)、既知の残差として
+    // 逐次拡張とする — RUST_INCHI_PLAN.md 参照。
     for i in 0..n {
         if excluded.contains(&i) || members.contains(&i) {
             continue;
@@ -867,6 +938,61 @@ mod tests {
         let groups = mobile_groups(&g);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0.len(), 2);
+    }
+
+    #[test]
+    fn mobile_h_ring_center_atom_joins_via_virtual_pairing() {
+        // 縮環の共有原子の実際の Kekule 二重結合が「別の」環に割り当たって
+        // いる場合、その環では単純な交互パスが途切れてしまうため、環内
+        // 限定の仮想マッチ (縮環共有原子どうしのペア付け) で環の中心寄りの
+        // ヘテロ原子も正しく群に含める。SMILES の書き方 (H がどちらの N に
+        // つくか) を入れ替えても対称的に正しく判定されることを確認する。
+        let g = build_molecule_graph("Cc1n[nH]c2ncccc12").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
+    }
+
+    #[test]
+    fn mobile_h_overlapping_seeds_merge_via_shared_endpoint() {
+        // 2 つの異なる中心がヘテロ端点を共有する場合、両方が独立した種を
+        // 形成し union-find でまとめて 1 つの群に統合されるべき (どちらか
+        // 一方だけを "used" として弾くと、共有原子の反対側の端点が
+        // 群から完全に脱落する)。
+        let g = build_molecule_graph("Cc1nc2cccnc2[nH]1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
+    }
+
+    #[test]
+    fn mobile_h_ignores_triple_bonds_and_cumulated_centers() {
+        // 三重結合 (ニトリル) は「二重結合を 1 本手放せる」受容体ではない。
+        let g = build_molecule_graph("NC#N").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+
+        // 累積二重結合 (N=C=N) の中心は、両端点が中心から見て共に二重結合
+        // で単結合の "自由な" 端点を持たないため、単純な星型パターンとして
+        // 有効ではない。
+        let g = build_molecule_graph("N=C=N").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+        let g = build_molecule_graph("N=C=O").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+    }
+
+    #[test]
+    fn mobile_h_unrelated_functional_groups_stay_separate() {
+        // 芳香環でつながっているだけの無関係な 2 つの官能基 (カルボン酸と
+        // アセトアミド) は、環外側 (環に対して非芳香族) がヘテロ原子で
+        // なければ環をまたいで橋渡ししない — カルボン酸の C はヘテロでは
+        // ないので、環がそこへ抜け出す辺を作らない。2 つの別々の群になる
+        // べき。
+        let g = build_molecule_graph("OC(=O)c1ccc(NC(C)=O)cc1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 2);
+        for grp in &groups {
+            assert_eq!(grp.0.len(), 2);
+        }
     }
 
     #[test]
