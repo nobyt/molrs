@@ -238,6 +238,10 @@
 関連文書: [RUST_PORT_HANDOFF.md](RUST_PORT_HANDOFF.md) (開発サイクル)、
 [RUST_3D_PLAN.md](RUST_3D_PLAN.md)・[RUST_2D_PLAN.md](RUST_2D_PLAN.md) (完了済み)。
 
+**残課題の実装計画**: [RUST_INCHI_I19_PLAN.md](RUST_INCHI_I19_PLAN.md)
+(I18 時点の残差 284 件をカテゴリ別にタスク化。検証ワークフロー・優先順位・
+各タスクの代表分子と退行注意を記載)。
+
 ## 目的
 
 `MoleculeGraph` から **標準 InChI (InChI=1S/…)** と **InChIKey** を生成する。
