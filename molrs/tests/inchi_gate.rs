@@ -198,7 +198,12 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     未解決 (2 回の実機計装調査でも根本メカニズム未特定、詳細は
     //     RUST_INCHI_PLAN.md I16 参照)。残る不一致の主因は一部の縮合環
     //     c 層直列化と立体絡みのケース。閾値は退行検知用。
-    assert!(acc >= 0.932, "full InChI accuracy {acc:.4} < 0.932");
+    // I17 (2026-08-04): 電荷分離 (zwitterion) で固定された負電荷 (ニトロ
+    //     N+(=O)O-・芳香族 N-オキシド n+ - O-) を可動プロトンとして数える
+    //     誤りを修正。純粋なニトロは h 層に (H,...) 群を出さなくなった
+    //     (2 つの O は正準番号付けの等価化のため群メンバーとしては残す)。
+    //     93.33% → 93.48%。
+    assert!(acc >= 0.934, "full InChI accuracy {acc:.4} < 0.934");
 }
 
 #[test]
@@ -268,5 +273,5 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.932, "to_inchi_key accuracy {acc:.4} < 0.932");
+    assert!(acc >= 0.935, "to_inchi_key accuracy {acc:.4} < 0.935");
 }

@@ -86,6 +86,21 @@ fn n_h_of(g: &MoleculeGraph, i: usize) -> usize {
         .count()
 }
 
+/// 原子の負電荷が「電荷分離 (zwitterion) で固定されている」か。
+///
+/// ニトロ基 (`N+(=O)O-`) や芳香族 N-オキシド (`n+ - O-`) の O- は、隣接する
+/// 正電荷原子と対をなす電荷分離型で、実 InChI ではこの負電荷を「除去可能な
+/// 可動プロトン」として扱わない (I11 の zwitterion 中性化スキップと同じ思想)。
+/// 該当する O- は可動 H 群のメンバーにはなり得る (硝酸 `O=[N+]([O-])O` は
+/// 3 つの O を 1 群とし可動 H = 1 だが、その 1 は O-H 由来で O- 由来ではない)
+/// が、可動 H 数には数えない。
+fn is_locked_zwitterion_neg(g: &MoleculeGraph, atom: usize) -> bool {
+    g.atoms[atom].formal_charge < 0
+        && g.adjacency[atom]
+            .iter()
+            .any(|&nb| g.atoms[nb].symbol != "H" && g.atoms[nb].formal_charge > 0)
+}
+
 /// Kekule 化済みの結合次数 (芳香族結合も 1/2 の実値。`g.bond_orders` は
 /// 芳香族を 1.5 で保持するため、可動 H 判定 (二重結合受容体の検出) には
 /// こちらを使う)。
@@ -627,14 +642,24 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
         }
         grp.sort_unstable();
         let total_h: usize = grp.iter().map(|&e| n_h_of(g, e)).sum();
-        let total_neg = grp
+        let raw_neg = grp
             .iter()
             .filter(|&&e| g.atoms[e].formal_charge < 0)
             .count();
-        if total_h + total_neg == 0 {
+        // H も負電荷も一切ない群は完全に偽陽性なので除外する。
+        if total_h + raw_neg == 0 {
             continue;
         }
-        groups.push((grp, (total_h + total_neg) as u8));
+        // 可動 H 数: 電荷分離 (zwitterion) で固定された負電荷 (ニトロ・
+        // N-オキシドの O-) は可動プロトンとして数えない (実 InChI 準拠、
+        // is_locked_zwitterion_neg)。可動数が 0 になっても群自体は残す —
+        // メンバーは正準番号付けで等価化される (ニトロの 2 つの O は
+        // 対称) が、h 層には出力されない (可動 H がないため)。
+        let unlocked_neg = grp
+            .iter()
+            .filter(|&&e| g.atoms[e].formal_charge < 0 && !is_locked_zwitterion_neg(g, e))
+            .count();
+        groups.push((grp, (total_h + unlocked_neg) as u8));
     }
     groups.sort_by_key(|(m, _)| m[0]);
     groups
@@ -1047,6 +1072,31 @@ mod tests {
         for grp in &groups {
             assert_eq!(grp.0.len(), 2);
         }
+    }
+
+    #[test]
+    fn mobile_h_zwitterion_charge_not_counted_as_mobile_proton() {
+        // I17: ニトロ基 (N+(=O)O-) の O- は電荷分離で固定された負電荷であり、
+        // 実 InChI では可動プロトンとして扱われない。純粋なニトロ (可動 H
+        // なし) は h 層に群を出さない — ただし 2 つの O は正準番号付けの
+        // 等価化のため群メンバーとしては残る (可動数 0 で返る)。
+        let g = build_molecule_graph("CC[N+](=O)[O-]").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2); // 2 つの O は等価化のためメンバー
+        assert_eq!(groups[0].1, 0); // 可動 H 数 0 → h 層には出さない
+        assert_eq!(
+            crate::inchi::to_inchi(&g).unwrap(),
+            "InChI=1S/C2H5NO2/c1-2-3(4)5/h2H2,1H3"
+        );
+
+        // 硝酸の zwitterion 形 (O=N+(O-)OH): 3 つの O は 1 群だが可動 H は
+        // O-H 由来の 1 のみ (O- は数えない) → (H,2,3,4)。
+        let g = build_molecule_graph("O=[N+]([O-])O").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
+        assert_eq!(groups[0].1, 1);
     }
 
     #[test]

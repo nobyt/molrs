@@ -63,10 +63,12 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
                     fixed_h[ci + 1] = n_h_of(orig);
                 }
             }
-            // 可動群 (成分内のもの) を canonical 番号列に変換
+            // 可動群 (成分内のもの) を canonical 番号列に変換。可動 H 数 0 の
+            // 群 (電荷分離ニトロ等、番号付けの等価化には使うが h 層には
+            // 出さない) は除外する。
             let mut mobile: Vec<(u8, Vec<usize>)> = all_groups
                 .iter()
-                .filter(|(eps, _)| eps.iter().all(|&e| num[e] != 0))
+                .filter(|(eps, mh)| *mh > 0 && eps.iter().all(|&e| num[e] != 0))
                 .map(|(eps, mh)| {
                     let mut nums: Vec<usize> = eps.iter().map(|&e| num[e]).collect();
                     nums.sort_unstable();
