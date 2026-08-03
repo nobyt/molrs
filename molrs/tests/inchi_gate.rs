@@ -215,7 +215,11 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     96.12%。(d) ブリッジ探索の辺に「環内カルボニル型受容体 C」を
     //     追加 (イサチン/フタルイミド型が両カルボニル O に到達)。96.12% →
     //     96.18%。残る主因は縮環系の正準番号付け直列化と一部の可動 H。
-    assert!(acc >= 0.960, "full InChI accuracy {acc:.4} < 0.960");
+    // I19 §3.1 (2026-08-04): リン中心 (P=O) の一級アミド端点を許可。硫黄の
+    //     スルホンアミド判定 (S=O が 2 個必要) と異なり、リンは P=O が
+    //     1 個でも一級 NH2 が可動になる (リン酸トリアミド等)。96.18% →
+    //     96.20%。
+    assert!(acc >= 0.9619, "full InChI accuracy {acc:.4} < 0.9619");
 }
 
 #[test]
@@ -285,6 +289,6 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.960, "to_inchi_key accuracy {acc:.4} < 0.960");
-    // 注: full InChI 96.18% / key 96.17% (I18 時点)
+    assert!(acc >= 0.9617, "to_inchi_key accuracy {acc:.4} < 0.9617");
+    // 注: full InChI 96.20% / key 96.18% (I19 §3.1 時点)
 }

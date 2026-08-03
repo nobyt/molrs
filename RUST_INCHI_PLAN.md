@@ -1,14 +1,14 @@
 # SMILES → InChI / InChIKey (pure Rust) 実装計画
 
-> **v1 実装状況 (2026-08-04 更新)**: I0–I18 実装済み。実測 (コーパス 7,453 分子、
-> RDKit オラクル):
+> **v1 実装状況 (2026-08-04 更新)**: I0–I18 実装済み、I19 進行中。実測
+> (コーパス 7,453 分子、RDKit オラクル):
 > - 式層 (Hill): 99.13% 一致 (残差は電荷正規化・有機金属切断)
 > - 正準番号 (AuxInfo /N:): **99.29%** 一致
 > - **InChIKey 機構** (`inchi_key_from_string` vs RDKit `InchiToInchiKey`,
 >   非立体 InChI 7,245 件): **7245/7245 = 完全一致**。SHA-256 (FIPS 180-4) +
 >   base-26 (`ikey_base26.c` 移植、除外トリプレット対応) は公式とビット一致
 > - フル InChI 文字列・InChIKey (v1 適用範囲 = 中性・単一成分・立体/同位体
->   なし): **96.18%** が RDKit と完全一致 (I4 時点は 74.17%、詳細な推移は下記)
+>   なし): **96.20%** が RDKit と完全一致 (I4 時点は 74.17%、詳細な推移は下記)
 > - CLI: `cargo run --bin inchi` (stdin SMILES → JSONL)
 > - **立体対応済み (I6-I8, 2026-07-19)**: `/b` (E/Z 二重結合)・`/t/m/s`
 >   (四面体) 層を実装。四面体パリティは molrs の R/S を再利用し
@@ -227,12 +227,19 @@
 >   回帰テスト: `undefined_stereogenic_cn_gets_question_mark` (stereo.rs)、
 >   `mobile_h_acridone_vinylogous_amide`・`mobile_h_isatin_reaches_both_carbonyls`
 >   (number.rs)。
+> - **I19 (2026-08-04 開始)**: [RUST_INCHI_I19_PLAN.md](RUST_INCHI_I19_PLAN.md)
+>   に基づき残差 284 件をタスク化して着手。§3.1 完了: `seed_groups` の
+>   非 C/N 中心での一級アミド端点許可条件を一般化。硫黄 (スルホンアミド)
+>   は S=O が 2 個必要だが、リンは P=O 1 個でも一級 NH2 (リン酸トリアミド
+>   `NP(=O)(N)N` 等) が可動になる。**96.18% → 96.20%**。回帰テスト
+>   `mobile_h_phosphoric_triamide`。
 > - v1 の非対応 (→ `Unsupported`): 多成分 (塩)・同位体 (i)・有機金属切断。
 >   残る文字列不一致の主因は (a) 一部の縮合環 c 層直列化 (番号付け)、
 >   (b) 一部の可動 H 群 (RDKit と InChI の芳香族性モデル差に起因する
 >   クマリン型等の過剰/過少検出)、(c) 縮環系の橋頭ヘテロ原子に隣接する
 >   環内の誤った橋渡し (I16-4、既知の未解決ケース)。詳細はコーパス実測で
->   継続監視 (`tests/inchi_gate.rs` 参照)。
+>   継続監視 (`tests/inchi_gate.rs` 参照、残タスクは
+>   [RUST_INCHI_I19_PLAN.md](RUST_INCHI_I19_PLAN.md))。
 
 
 関連文書: [RUST_PORT_HANDOFF.md](RUST_PORT_HANDOFF.md) (開発サイクル)、

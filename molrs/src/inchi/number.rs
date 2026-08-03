@@ -320,7 +320,14 @@ fn seed_groups(
             if !is_hetero(sym) {
                 continue;
             }
-            if sym == "N" && !center_is_c_or_n(center) && !(heavy_deg(nb) == 1 && n_double_o >= 2) {
+            // 末端 N (NH2) を非 C/N 中心の端点として許すのは、中心が
+            // 高酸化状態のヘテロ原子であることを示す二重結合 O の数が
+            // 十分なとき: S は 2 個 (スルホンアミド、スルフィンアミドは
+            // 1 個で非可動) だが、P はリン酸トリアミド等で 1 個の P=O
+            // でも一級アミドが可動になる (I19 §3.1)。
+            let center_sym = g.atoms[center].symbol.as_str();
+            let n_double_o_ok = n_double_o >= 2 || (center_sym == "P" && n_double_o >= 1);
+            if sym == "N" && !center_is_c_or_n(center) && !(heavy_deg(nb) == 1 && n_double_o_ok) {
                 continue;
             }
             let bond_from_center_is_double = kekule
@@ -1197,6 +1204,26 @@ mod tests {
     fn heavy_atoms_excludes_h() {
         let g = build_molecule_graph("C").unwrap();
         assert_eq!(heavy_atoms(&g).len(), 1);
+    }
+
+    #[test]
+    fn mobile_h_phosphoric_triamide() {
+        // I19 §3.1: リン酸トリアミド (P(=O)(NH2)3) は P=O と 3 つの NH2 が
+        // 1 群になり、可動 H = 6 (各 NH2 の 2H)。硫黄と異なり P は P=O が
+        // 1 個でも一級アミドが可動になる (スルホンアミドは S=O が 2 個
+        // 必要、スルフィンアミドは非可動のまま — 既存の
+        // `mobile_h_does_not_over_bridge` の二級スルホンアミドケースは
+        // 変わらないはず)。
+        let g = build_molecule_graph("NP(=O)(N)N").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 4); // O + 3 N
+        assert_eq!(groups[0].1, 6);
+
+        // 炭素置換の膦酸アミド (ホスフィン酸アミド、非可動な炭素置換のみ)
+        // は群を作らない。
+        let g = build_molecule_graph("CP(=O)(C)C").unwrap();
+        assert!(mobile_groups(&g).is_empty());
     }
 
     #[test]
