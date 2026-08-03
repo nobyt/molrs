@@ -132,8 +132,24 @@ pub(crate) fn connection_layer(comp: &Component) -> String {
             }
         }
     }
-    // 部分木サイズ (子の出力順に使う): 葉が先、幹 (最大部分木) が最後
-    let mut subtree = vec![1usize; n + 1];
+    // 部分木の「描画重み」= 部分木の原子数 + 部分木内で言及される環閉合
+    // (後退辺) の数。子の出力順に使う: 軽い枝 (末端 O 等) が先に括弧、
+    // 重い幹が最後にインライン。環閉合も 1 項目として数えるのが実 InChI の
+    // 挙動 (例: 末端 O の枝 `(7)` は環閉合を含む枝 `6-3` より先)。
+    let mut subtree = vec![0usize; n + 1];
+    for c in 1..=n {
+        if discovery[c] == usize::MAX {
+            continue;
+        }
+        // 自身 1 + この原子で言及する後退辺の数
+        let backs = comp.adj[c]
+            .iter()
+            .filter(|&&x| {
+                x != parent[c] && !children[c].contains(&x) && discovery[x] < discovery[c]
+            })
+            .count();
+        subtree[c] = 1 + backs;
+    }
     // discovery 降順 = 葉から根へ (後順)
     let mut order: Vec<usize> = (1..=n).filter(|&c| discovery[c] != usize::MAX).collect();
     order.sort_by_key(|&c| std::cmp::Reverse(discovery[c]));
