@@ -202,8 +202,10 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     N+(=O)O-・芳香族 N-オキシド n+ - O-) を可動プロトンとして数える
     //     誤りを修正。純粋なニトロは h 層に (H,...) 群を出さなくなった
     //     (2 つの O は正準番号付けの等価化のため群メンバーとしては残す)。
-    //     93.33% → 93.48%。
-    assert!(acc >= 0.934, "full InChI accuracy {acc:.4} < 0.934");
+    //     加えてビアリール連結結合 (別々の芳香環を単結合でつなぐ、共有環
+    //     なし) をブリッジ探索の辺から除外 (どの Kekule 構造でも単結合の
+    //     ため互変異性経路にならない)。93.33% → 93.51%。
+    assert!(acc >= 0.935, "full InChI accuracy {acc:.4} < 0.935");
 }
 
 #[test]
@@ -274,4 +276,5 @@ fn to_inchi_key_matches_rdkit_where_produced() {
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
     assert!(acc >= 0.935, "to_inchi_key accuracy {acc:.4} < 0.935");
+    // 注: full InChI 93.51% / key 93.56% (I17 時点)
 }

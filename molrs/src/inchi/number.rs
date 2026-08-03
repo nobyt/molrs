@@ -504,7 +504,14 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             }
         }
         let edge_ok = match (g.atoms[u].is_aromatic, g.atoms[v].is_aromatic) {
-            (true, true) => true,
+            // I17: 両端が芳香族でも、その結合が「どの環にも属さない」
+            // (共有環なし) ビアリール連結結合 (別々の芳香環を単結合でつなぐ)
+            // は除外する。この結合はどの Kekule 構造でも単結合のままで、
+            // 二重結合の付け替え (互変異性経路) に参加できないため、環をまたぐ
+            // 誤った橋渡し (例: `Nc1ccc(-c2ccncc2)cc1` のアミノ基→対側環の
+            // ピリジン N) を生む。縮環 (共有原子を持つ) の結合は shared が
+            // 空でないので影響しない。
+            (true, true) => !shared.is_empty(),
             (true, false) => is_hetero(g.atoms[v].symbol.as_str()),
             (false, true) => is_hetero(g.atoms[u].symbol.as_str()),
             (false, false) => false,
@@ -1097,6 +1104,24 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0.len(), 3);
         assert_eq!(groups[0].1, 1);
+    }
+
+    #[test]
+    fn mobile_h_does_not_bridge_across_biaryl_bond() {
+        // I17: 別々の芳香環を単結合 (ビアリール連結) でつなぐ分子で、一方の
+        // 環の環外アミノ基が、対側の環のピリジン N まで誤って橋渡ししない
+        // こと。ビアリール結合はどの Kekule 構造でも単結合のままで二重結合の
+        // 付け替えに参加できないため、互変異性経路にならない。アミノ基は
+        // 固定 (NH2)、群なしが正しい。
+        let g = build_molecule_graph("Nc1ccc(-c2ccncc2)cc1").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+
+        // 対照: アミノ基が同一のピリジン環に直接ついている場合は従来どおり
+        // 橋渡しする (ビアリール除外は縮環・同一環の橋渡しに影響しない)。
+        let g = build_molecule_graph("CNc1ccncc1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
     }
 
     #[test]
