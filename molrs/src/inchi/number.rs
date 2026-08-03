@@ -349,7 +349,12 @@ fn seed_groups(
             continue;
         }
         // O/S 端点だけで酸系 (二重 O/S ≥1 かつ 供与体 O/S ≥1) を成すなら、
-        // N を除外して酸のみを群とする (カルバミン酸は O,O のみで N は固定)。
+        // 置換された (末端でない) N を除外して酸のみを群とする (カルバミン酸
+        // `CNC(=O)O` は N が甲基置換の二級なので O,O のみに固定)。ただし
+        // 末端の一級 NH2 (heavy_deg == 1、中心以外に重原子隣接を持たない) は
+        // 除外しない — ジチオカルバミン酸 `NC(=S)S` やスルファミン酸
+        // `NS(=O)(=O)O` の NH2 は酸対と一緒に可動になるべき (I19 §3.2、実
+        // InChI で確認)。
         let os_ep: Vec<usize> = endpoints
             .iter()
             .copied()
@@ -361,13 +366,18 @@ fn seed_groups(
         let os_donor = os_ep
             .iter()
             .any(|&e| n_h_of(g, e) >= 1 || g.atoms[e].formal_charge < 0);
+        let is_primary_n = |e: usize| g.atoms[e].symbol == "N" && heavy_deg(e) == 1;
         let chosen: Vec<usize> = if os_double && os_donor && os_ep.len() >= 2 {
             for &e in &endpoints {
-                if !os_ep.contains(&e) {
+                if !os_ep.contains(&e) && !is_primary_n(e) {
                     excluded.insert(e);
                 }
             }
-            os_ep
+            endpoints
+                .iter()
+                .copied()
+                .filter(|&e| os_ep.contains(&e) || is_primary_n(e))
+                .collect()
         } else {
             endpoints
         };
@@ -1224,6 +1234,35 @@ mod tests {
         // は群を作らない。
         let g = build_molecule_graph("CP(=O)(C)C").unwrap();
         assert!(mobile_groups(&g).is_empty());
+    }
+
+    #[test]
+    fn mobile_h_primary_amine_joins_os_acid_group() {
+        // I19 §3.2: O/S だけの酸系対に対する N 除外規則
+        // (カルバミン酸 `CNC(=O)O` のような**置換された**二級 N を除外する)
+        // は、末端の一級 NH2 (中心以外に重原子隣接を持たない) までは除外
+        // しない。ジチオカルバミン酸・スルファミン酸は NH2 も酸対と一緒に
+        // 可動になるべき (実 InChI で確認)。
+        let g = build_molecule_graph("NC(=S)S").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3); // N + S + S
+        assert_eq!(groups[0].1, 3); // NH2 (2) + SH (1)
+
+        let g = build_molecule_graph("NS(=O)(=O)O").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 4); // N + O + O + O
+        assert_eq!(groups[0].1, 3); // NH2 (2) + OH (1)
+
+        // 対照: カルバミン酸の N は甲基置換 (二級) なので引き続き除外。
+        let g = build_molecule_graph("CNC(=O)O").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+        for &e in &groups[0].0 {
+            assert_eq!(g.atoms[e].symbol, "O");
+        }
     }
 
     #[test]

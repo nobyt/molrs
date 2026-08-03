@@ -219,7 +219,11 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     スルホンアミド判定 (S=O が 2 個必要) と異なり、リンは P=O が
     //     1 個でも一級 NH2 が可動になる (リン酸トリアミド等)。96.18% →
     //     96.20%。
-    assert!(acc >= 0.9619, "full InChI accuracy {acc:.4} < 0.9619");
+    // I19 §3.2 (2026-08-04): O/S だけの酸系対に対する N 除外規則 (カルバミン
+    //     酸のような置換 N を除外) が、末端の一級 NH2 (heavy_deg==1) まで
+    //     過剰に除外していたのを修正。ジチオカルバミン酸・スルファミン酸の
+    //     NH2 は酸対と一緒に可動になる。96.20% → 96.21%。
+    assert!(acc >= 0.962, "full InChI accuracy {acc:.4} < 0.962");
 }
 
 #[test]
@@ -289,6 +293,6 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.9617, "to_inchi_key accuracy {acc:.4} < 0.9617");
-    // 注: full InChI 96.20% / key 96.18% (I19 §3.1 時点)
+    assert!(acc >= 0.9619, "to_inchi_key accuracy {acc:.4} < 0.9619");
+    // 注: full InChI 96.21% / key 96.20% (I19 §3.2 時点)
 }
