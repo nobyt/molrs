@@ -165,6 +165,52 @@ fn is_acceptor_from(
     }
 }
 
+/// 原子の重原子次数 (`chem_bonds_valence` と対にして使う、H は含まない)。
+fn heavy_degree(g: &MoleculeGraph, atom: usize) -> usize {
+    g.adjacency[atom]
+        .iter()
+        .filter(|&&x| g.atoms[x].symbol != "H")
+        .count()
+}
+
+/// 原子が「既存の (実 Kekule) 二重結合を最低 1 本持つ」か。
+/// 実 InChI の `MAX_AT_FLOW(atom) = chem_bonds_valence − 次数` が正、に相当。
+fn has_own_double(
+    g: &MoleculeGraph,
+    kekule: &std::collections::HashMap<(usize, usize), f64>,
+    atom: usize,
+) -> bool {
+    chem_bonds_valence(g, kekule, atom) > heavy_degree(g, atom) as f64 + 1e-9
+}
+
+/// 原子が可動 H 探索グラフの頂点として「余裕」を持つか (I16、balanced
+/// network flow の `MAX_AT_FLOW` に相当)。
+///
+/// 実 InChI (`ichi_bns.c`) では各原子は `MAX_AT_FLOW(atom) = chem_bonds_valence
+/// − 次数` の容量を持ち、これが 0 の原子はどの結合辺にも一切マッチング
+/// (二重結合の付け替え) できない — ただし互変異性の端点として認識された
+/// 原子 (現在 H/負電荷を持つ供与体) は、別途 t-group hub 経由の専用辺で
+/// この容量に +1 されるため実質的に参加できる。
+///
+/// molrs では t-group hub を作らない代わりに、この「+1」を直接ここで
+/// モデル化する: 既存の二重結合を持つ原子 (素の `MAX_AT_FLOW` > 0) は常に
+/// 参加可、既存の二重結合を持たなくても H/負電荷を持つヘテロ原子 (真の
+/// 供与体候補) は参加可。逆に、既存の二重結合を持たず H/負電荷も持たない
+/// 原子 (例: 縮環系の橋頭ヘテロ原子で価数が環内結合だけで使い切られている
+/// 場合、インドリジン型の 3 配位 N) は、探索グラフのどの辺にも参加させない
+/// — 実 InChI で全ての接続辺の容量が `min(MAX_AT_FLOW(i), MAX_AT_FLOW(j), 2)
+/// = 0` になるのと同じ結果になる。単純なピロール型 N-H (H を持つので参加可)
+/// との違いはここで区別される。
+fn has_search_slack(
+    g: &MoleculeGraph,
+    kekule: &std::collections::HashMap<(usize, usize), f64>,
+    atom: usize,
+) -> bool {
+    has_own_double(g, kekule, atom)
+        || (is_hetero(g.atoms[atom].symbol.as_str())
+            && (n_h_of(g, atom) >= 1 || g.atoms[atom].formal_charge < 0))
+}
+
 /// 単純な union-find (可動 H 群のブリッジ統合、I13 で使用)。
 struct UnionFind {
     parent: Vec<usize>,
@@ -449,6 +495,14 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             (false, false) => false,
         };
         if !edge_ok {
+            continue;
+        }
+        // I16: 容量ゼロの原子 (橋頭ヘテロ原子など) はどの辺にも参加させない
+        // (balanced network flow の MAX_AT_FLOW=0 相当、has_search_slack 参照)。
+        // コーパス測定では退行なし・改善なし (この経路自体が橋頭原子の辺を
+        // 通らずに漏れる残差もあるため、単独では不十分。RUST_INCHI_PLAN.md
+        // 参照)。
+        if !has_search_slack(g, &kekule, u) || !has_search_slack(g, &kekule, v) {
             continue;
         }
         if shared.is_empty() {
@@ -1014,5 +1068,25 @@ mod tests {
     fn heavy_atoms_excludes_h() {
         let g = build_molecule_graph("C").unwrap();
         assert_eq!(heavy_atoms(&g).len(), 1);
+    }
+
+    #[test]
+    fn mobile_h_fused_ring_bridges_when_fusion_atom_touches_both_heteroatoms() {
+        // I16: 実機 inchi-1 で検証済みの規則 — 縮環越しの互変異性ブリッジは、
+        // 縮環の共有原子 (どちらか一方) が両方の環でそれぞれヘテロ端点に
+        // 直接隣接しているときに限って成立する。この分子は共有原子が
+        // ピロール型 N-H (環1) とピリジン型 N (環2) の両方に直接隣接する
+        // ため、アザインドール型 (mobile_h_does_not_over_bridge 参照、共有
+        // 原子が両側のヘテロ原子に同時には隣接しない) とは異なりブリッジが
+        // 成立するべき。この規則は seed_groups の「中心原子 1 個 + 直接
+        // ヘテロ端点」検出でそのまま自然に捉えられる (環をまたぐ専用の
+        // 探索は不要)。
+        let g = build_molecule_graph("Cc1c[nH]c2ncccc12").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+        for &e in &groups[0].0 {
+            assert_eq!(g.atoms[e].symbol, "N");
+        }
     }
 }
