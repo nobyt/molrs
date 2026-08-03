@@ -503,6 +503,20 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
                 }
             }
         }
+        // 非芳香族側が「カルボニル型受容体炭素」(ヘテロ原子への二重結合を
+        // 持つ C) で、かつ結合が環内 (共有環あり) の場合も辺として許可する
+        // (I18)。イサチン/フタルイミド型の縮環 5 員環で、芳香環を経由した
+        // ビニロガスな経路がケト基の O まで届くために必要。環外置換基
+        // (ベンゼン環上のカルボン酸の C など) は共有環を持たないため影響
+        // せず、無関係な官能基の誤結合は起きない。
+        let is_ring_acceptor_c = |x: usize| -> bool {
+            !shared.is_empty()
+                && g.atoms[x].symbol == "C"
+                && g.adjacency[x].iter().any(|&nb| {
+                    is_hetero(g.atoms[nb].symbol.as_str())
+                        && kekule.get(&(x.min(nb), x.max(nb))).copied().unwrap_or(1.0) == 2.0
+                })
+        };
         let edge_ok = match (g.atoms[u].is_aromatic, g.atoms[v].is_aromatic) {
             // I17: 両端が芳香族でも、その結合が「どの環にも属さない」
             // (共有環なし) ビアリール連結結合 (別々の芳香環を単結合でつなぐ)
@@ -512,8 +526,8 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             // ピリジン N) を生む。縮環 (共有原子を持つ) の結合は shared が
             // 空でないので影響しない。
             (true, true) => !shared.is_empty(),
-            (true, false) => is_hetero(g.atoms[v].symbol.as_str()),
-            (false, true) => is_hetero(g.atoms[u].symbol.as_str()),
+            (true, false) => is_hetero(g.atoms[v].symbol.as_str()) || is_ring_acceptor_c(v),
+            (false, true) => is_hetero(g.atoms[u].symbol.as_str()) || is_ring_acceptor_c(u),
             (false, false) => false,
         };
         if !edge_ok {
@@ -558,19 +572,59 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
                 && kekule.get(&(a.min(nb), a.max(nb))).copied().unwrap_or(1.0) == 2.0
         })
     };
+    // 孤児は 2 個とは限らない (アクリドン型の中央環では、環内の全炭素の
+    // 実二重結合が外側の環や環外 =O に割り当たり、4 個以上になる)。環に
+    // 沿って隣接する孤児どうしを貪欲にペアリングする: まず「孤児隣接が
+    // 1 個だけ」の端点から確定し (パスの端)、残りが全て次数 2 (環全体が
+    // 孤児) なら最小番号から開始する。奇数長のパス等でペアにできない
+    // 孤児は未マッチのまま残す (従来どおり探索の行き止まりになるだけ)。
     for (ri, ring) in g.ring_atom_sets.iter().enumerate() {
-        let orphans: Vec<usize> = ring
+        let mut orphans: Vec<usize> = ring
             .iter()
             .copied()
             .filter(|&a| a < n && g.atoms[a].symbol != "H")
             .filter(|&a| matched[clone_in(a, ri)].is_none() && has_real_double(a))
             .collect();
-        if let [a, b] = orphans[..] {
-            if g.adjacency[a].contains(&b) {
-                let (ca, cb) = (clone_in(a, ri), clone_in(b, ri));
-                matched[ca] = Some(cb);
-                matched[cb] = Some(ca);
-            }
+        if orphans.len() < 2 {
+            continue;
+        }
+        orphans.sort_unstable();
+        let orphan_set: std::collections::HashSet<usize> = orphans.iter().copied().collect();
+        let mut unpaired: std::collections::HashSet<usize> = orphan_set.clone();
+        loop {
+            let deg = |a: usize, unpaired: &std::collections::HashSet<usize>| {
+                g.adjacency[a]
+                    .iter()
+                    .filter(|&&nb| orphan_set.contains(&nb) && unpaired.contains(&nb))
+                    .count()
+            };
+            // パスの端 (孤児隣接 1) を優先、なければ環 (全て次数 2) の最小番号
+            let pick = orphans
+                .iter()
+                .copied()
+                .filter(|a| unpaired.contains(a))
+                .find(|&a| deg(a, &unpaired) == 1)
+                .or_else(|| {
+                    orphans
+                        .iter()
+                        .copied()
+                        .filter(|a| unpaired.contains(a))
+                        .find(|&a| deg(a, &unpaired) >= 1)
+                });
+            let Some(a) = pick else { break };
+            let Some(b) = g.adjacency[a]
+                .iter()
+                .copied()
+                .filter(|nb| orphan_set.contains(nb) && unpaired.contains(nb))
+                .min()
+            else {
+                break;
+            };
+            unpaired.remove(&a);
+            unpaired.remove(&b);
+            let (ca, cb) = (clone_in(a, ri), clone_in(b, ri));
+            matched[ca] = Some(cb);
+            matched[cb] = Some(ca);
         }
     }
 
@@ -1143,6 +1197,29 @@ mod tests {
     fn heavy_atoms_excludes_h() {
         let g = build_molecule_graph("C").unwrap();
         assert_eq!(heavy_atoms(&g).len(), 1);
+    }
+
+    #[test]
+    fn mobile_h_acridone_vinylogous_amide() {
+        // I18: アクリドン (中央 6 員環に C=O と N-H が 1,4)。中央環の全炭素の
+        // 実二重結合は外側のベンゾ環や環外 =O に割り当たるため孤児が 4 個
+        // 以上になる。環に沿った孤児の貪欲ペアリングで中央環を交互閉路と
+        // して探索でき、N-H から C=O の O まで届いて 1 群 (N, O) になる。
+        let g = build_molecule_graph("O=c1c2ccccc2[nH]c2ccccc12").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+    }
+
+    #[test]
+    fn mobile_h_isatin_reaches_both_carbonyls() {
+        // I18: イサチン (非芳香族 5 員環に 2 つの C=O と N-H)。芳香族を経由
+        // する経路で環内カルボニル炭素 (ヘテロへの二重結合を持つ受容体 C)
+        // まで辺を延ばし、両方の O とアミド N が 1 群 (3 端点) になる。
+        let g = build_molecule_graph("O=C1Nc2ccccc2C1=O").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
     }
 
     #[test]
