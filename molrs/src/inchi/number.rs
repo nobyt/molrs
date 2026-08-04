@@ -345,7 +345,17 @@ fn seed_groups(
             .count()
     };
     for center in 0..n {
-        if g.atoms[center].symbol == "H" {
+        // 中心原子自身が価数スラック 0 (橋頭ヘテロ原子など、二重結合を
+        // 一切持たない) の場合、中心にはなれない (I19 §3.4 追加修正)。
+        // 中心の隣接ヘテロ原子がそれぞれ独立した実在の二重結合を持つ
+        // (集約判定で「受容体」に見える) だけで、実際には中心自身がその
+        // どちらとも二重結合を作れない (全ての結合が恒久的に単結合) のに
+        // 誤って星型と判定してしまうケースがあった (例: `Oc1cc2cccnn2n1`
+        // の橋頭 N が、両隣の独立した N=C 二重結合を持つ 2 つの N を
+        // 「受容体端点」として誤って星型を形成し、本来無関係な環外 O の
+        // 群に合流していた)。通常の正当な中心 (カルボン酸・アミド等) は
+        // 必ず自分自身の実在二重結合を持つため、この条件で除外されない。
+        if g.atoms[center].symbol == "H" || !has_search_slack(g, kekule, center) {
             continue;
         }
         // 中心の二重結合 O 数 (非炭素中心の N 端点可否に使う)
@@ -1436,6 +1446,32 @@ mod tests {
         // (単なる CH2、橋頭とは無関係) があっても毒されない — トリアゾール
         // 環の 3 つの N が正しく 1 群になる (I9 の既存テストと同じ分子)。
         let g = build_molecule_graph("C1CCc2[nH]nnc2C1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
+    }
+
+    #[test]
+    fn mobile_h_bridgehead_atom_cannot_be_seed_center() {
+        // I19 §3.4 追加修正: 橋頭ヘテロ原子自身 (価数スラック 0、全ての
+        // 結合が恒久的に単結合) が `seed_groups` の中心として使われ、その
+        // 両隣の独立した (橋頭原子とは無関係な実在二重結合を持つ) ヘテロ
+        // 原子 2 つを集約判定で「受容体端点」とみなし、誤った星型を形成
+        // する抜け穴があった。橋頭原子はどの結合も二重結合にできない
+        // (全て恒久的に単結合) ため、中心にはなり得ない。
+        //
+        // `Oc1cc2cccnn2n1` (トリアゾロピリジン型): 環外フェノール性 OH は
+        // 隣接する N と局所的に正しく 2 端点の群を成すべきだが、橋頭 N が
+        // 中心となって両隣の N を誤って拾い、無関係な 3 端点の群に併合
+        // されていた。
+        let g = build_molecule_graph("Oc1cc2cccnn2n1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+
+        // 対照: 橋頭原子を持たない通常の縮環系 (I16 で検証済みの規則、
+        // 共有原子が両環のヘテロ端点に直接隣接) は退行しない。
+        let g = build_molecule_graph("Cc1[nH]nc2ncccc12").unwrap();
         let groups = mobile_groups(&g);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0.len(), 3);
