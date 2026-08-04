@@ -226,6 +226,65 @@ fn has_search_slack(
             && (n_h_of(g, atom) >= 1 || g.atoms[atom].formal_charge < 0))
 }
 
+/// 容量ゼロの原子 (橋頭ヘテロ原子など、[`has_search_slack`] が false) を
+/// 1 つでも含む SSSR 環に属する原子を全て「無効化」した集合を返す
+/// (I19 §3.4)。
+///
+/// 実 InChI で確認された挙動: 橋頭ヘテロ原子 (例: インドリジン型の 3 配位
+/// N、二重結合を一切持たない) を含む環は、その環自体だけでなく、その環に
+/// 融合しているもう一方の環も含めて、可動 H 検出の対象から完全に除外
+/// される。これは単に「橋頭原子越しの橋渡しを禁止する」以上に強い制約で、
+/// 橋頭原子を全く経由しない**局所的な単一中心パターン**さえも無効化する
+/// (例: `Oc1cn2cccc2cn1` — 環外 O は環内の隣接 N と直接の 1,3 パターンを
+/// 成すが、その N が属する環がもう一方の環の橋頭 N と縮環しているだけで
+/// 可動化されない)。コーパス実測 (RDKit 経由の実 InChI 出力) で確認した
+/// 56 件以上の橋頭型縮環分子から導出した規則。
+fn poisoned_ring_atoms(
+    g: &MoleculeGraph,
+    kekule: &std::collections::HashMap<(usize, usize), f64>,
+) -> std::collections::HashSet<usize> {
+    let n = g.atoms.len();
+    let heavy_degree = |i: usize| {
+        g.adjacency[i]
+            .iter()
+            .filter(|&&x| g.atoms[x].symbol != "H")
+            .count()
+    };
+    let mut poisoned = std::collections::HashSet::new();
+    for ring in &g.ring_atom_sets {
+        // 非芳香族の環メンバー (縮環した飽和側の CH2 等) は、そもそも
+        // Kekule/芳香族系に参加していないので二重結合を持たなくて当然
+        // (単なる sp3 炭素)。橋頭「容量ゼロ」の概念は芳香族系の中でのみ
+        // 意味を持つため、判定は芳香族原子に限る。
+        //
+        // さらに、次数 3 以上 (2 個以上の環に属する真の縮環共有原子=橋頭)
+        // に限定する。次数 2 の通常の環ヘテロ原子 (フラン/チオフェン型の
+        // O/S など、H を持たない単純な芳香環ヘテロ原子) も容量スラック 0
+        // になるが、これは「橋頭」ではなく単に自分自身の 2 本の環内結合が
+        // 常に単結合という局所的事実に過ぎない (それはブリッジ探索の辺条件
+        // `has_search_slack` で個別に既に正しく除外されている) — 環全体を
+        // 毒すると、その環自体が持つ正当な互変異性 (例: ベンゾオキサゾロン
+        // の N-H/C=O) まで壊してしまう。次数 3 以上の橋頭だけが「その環の
+        // Kekule 構造を一意に固定してしまい環全体の交互性を奪う」という
+        // より強い効果を持つ (I19 §3.4、コーパス実測で確認)。
+        let has_bridgehead_zero_slack = ring.iter().any(|&a| {
+            a < n
+                && g.atoms[a].symbol != "H"
+                && g.atoms[a].is_aromatic
+                && heavy_degree(a) >= 3
+                && !has_search_slack(g, kekule, a)
+        });
+        if has_bridgehead_zero_slack {
+            for &a in ring {
+                if a < n && g.atoms[a].is_aromatic {
+                    poisoned.insert(a);
+                }
+            }
+        }
+    }
+    poisoned
+}
+
 /// 単純な union-find (可動 H 群のブリッジ統合、I13 で使用)。
 struct UnionFind {
     parent: Vec<usize>,
@@ -427,6 +486,13 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     let n = g.atoms.len();
     let kekule = kekule_order_map(g);
     let (seeds, excluded) = seed_groups(g, &kekule);
+    // I19 §3.4: 橋頭ヘテロ原子を含む環 (とその融合相手の環) は、複数原子を
+    // またぐブリッジ探索 (辺・孤立供与体起点) の対象から除外する
+    // (poisoned_ring_atoms 参照)。ただし単一中心の局所パターン
+    // ([`seed_groups`]、実在する二重結合を使う直接の O-C=N 型等) は、
+    // 橋頭原子の存在に関わらず常に有効 — 局所パターンは橋頭原子の容量には
+    // 一切依存しないため (I19 §3.4、コーパス実測で確認)。
+    let poisoned = poisoned_ring_atoms(g, &kekule);
 
     // 縮環の共有原子 (2 つ以上の SSSR 環に属する原子) は、探索グラフ上では
     // 環ごとに別頂点に分裂させる (頂点分割)。ある環の辺だけを通って共有
@@ -556,10 +622,12 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
         }
         // I16: 容量ゼロの原子 (橋頭ヘテロ原子など) はどの辺にも参加させない
         // (balanced network flow の MAX_AT_FLOW=0 相当、has_search_slack 参照)。
-        // コーパス測定では退行なし・改善なし (この経路自体が橋頭原子の辺を
-        // 通らずに漏れる残差もあるため、単独では不十分。RUST_INCHI_PLAN.md
-        // 参照)。
         if !has_search_slack(g, &kekule, u) || !has_search_slack(g, &kekule, v) {
+            continue;
+        }
+        // I19 §3.4: 橋頭ヘテロ原子を含む環 (とその融合相手の環) に属する
+        // 原子はどの辺にも参加させない (poisoned_ring_atoms 参照)。
+        if poisoned.contains(&u) || poisoned.contains(&v) {
             continue;
         }
         if shared.is_empty() {
@@ -670,16 +738,10 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     // ヘテロ原子とは扱いが異なる)。
     //
     // 縮環系の橋頭ヘテロ原子 (例: インドリジン型の 3 配位 N で二重結合を
-    // 一切持たない) に隣接する環外ドナー (例: 縮環フェノール性 OH) は、
-    // 局所的な星型を作れない上、環全体の芳香族性が橋頭原子を介して両環に
-    // またがっているため単純な 1 環内の交互パスだけでは正しく判定できず、
-    // 無関係な環内ヘテロ原子まで誤って橋渡ししてしまうことがある。この
-    // ケースだけを狙い撃ちして環外ドナーの隣接原子が橋頭原子でなければ
-    // 除外する、といった安全な追加規則は未発見のため (単純な芳香環のみに
-    // 限定すると正当な環外アミノ基のケースまで壊れる)、既知の残差として
-    // 逐次拡張とする — RUST_INCHI_PLAN.md 参照。
+    // 一切持たない) を含む環のメンバーは孤立供与体の起点にもしない
+    // (poisoned_ring_atoms、I19 §3.4)。
     for i in 0..n {
-        if excluded.contains(&i) || members.contains(&i) {
+        if excluded.contains(&i) || members.contains(&i) || poisoned.contains(&i) {
             continue;
         }
         let a = &g.atoms[i];
@@ -1336,6 +1398,44 @@ mod tests {
         // する経路で環内カルボニル炭素 (ヘテロへの二重結合を持つ受容体 C)
         // まで辺を延ばし、両方の O とアミド N が 1 群 (3 端点) になる。
         let g = build_molecule_graph("O=C1Nc2ccccc2C1=O").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
+    }
+
+    #[test]
+    fn mobile_h_bridgehead_ring_blocks_bridge_search_only() {
+        // I19 §3.4: 縮環の橋頭ヘテロ原子 (二重結合を一切持たない、次数 3
+        // 以上、例: インドリジン型の 3 配位 N) を含む環は、複数原子をまたぐ
+        // ブリッジ探索 (辺・孤立供与体起点) の対象から除外される
+        // (poisoned_ring_atoms)。実 InChI で確認: このケースは環外フェノール
+        // 性 OH がどこにも橋渡ちせず完全に固定される。
+        let g = build_molecule_graph("Oc1ccnc2cccn12").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+
+        // 対照 1: 橋頭原子を含む環に属していても、単一中心の局所パターン
+        // (実在する二重結合を使う直接の O-C=N 型) はブリッジ探索を必要と
+        // しないため、橋頭原子の有無に関わらず常に有効であるべき — ここでは
+        // O が結合する炭素が環内窒素と実際に二重結合しており (橋頭原子とは
+        // 別の窒素)、局所的に 2 端点の群が正しく成立する。
+        let g = build_molecule_graph("Oc1cc2ccccn2n1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+
+        // 対照 2: 橋頭原子ではない通常の次数 2 環ヘテロ原子 (フラン型の O、
+        // H を持たず二重結合もないので価数スラック 0 になるが橋頭ではない)
+        // を含む環は毒されない — ベンゾオキサゾロンの N-H/C=O 互変異性が
+        // 正しく機能する。
+        let g = build_molecule_graph("O=c1[nH]c2ccccc2o1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+
+        // 対照 3: 縮環した飽和 (非芳香族) 側に価数スラック 0 の sp3 炭素
+        // (単なる CH2、橋頭とは無関係) があっても毒されない — トリアゾール
+        // 環の 3 つの N が正しく 1 群になる (I9 の既存テストと同じ分子)。
+        let g = build_molecule_graph("C1CCc2[nH]nnc2C1").unwrap();
         let groups = mobile_groups(&g);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0.len(), 3);
