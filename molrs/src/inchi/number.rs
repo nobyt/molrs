@@ -697,8 +697,19 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             }
             for reached_clone in graph.alternating_reachable(&matched, root_clone) {
                 let reached = vertex_atom[reached_clone];
-                uf.union(root, reached);
+                // I19 §3.3: 縮環の共有原子 (分身を持つ) は、環ごとに独立した
+                // 別々の探索から「たまたま両方とも通過する」ことがある —
+                // その原子自身はヘテロ原子でない単なる経由点であっても、
+                // 原子 ID ベースの union-find では同一原子として扱われて
+                // しまい、本来無関係な 2 つの互変異性系 (例: 縮環の一方の
+                // 環にある環外フェノール性 OH と、もう一方の環にある独立
+                // した環内 N-H 互変異性) が誤って 1 群に併合されてしまう。
+                // 頂点分割は探索グラフレベルでは 2 つの環を正しく分離して
+                // いるので、union-find もヘテロ原子 (最終的に群メンバーに
+                // なりうる原子) への到達だけを併合対象にすれば十分 — 経由
+                // 点の炭素まで union すると分割の効果が最終段で失われる。
                 if is_hetero(g.atoms[reached].symbol.as_str()) {
+                    uf.union(root, reached);
                     members.insert(reached);
                 }
             }
@@ -1263,6 +1274,32 @@ mod tests {
         for &e in &groups[0].0 {
             assert_eq!(g.atoms[e].symbol, "O");
         }
+    }
+
+    #[test]
+    fn mobile_h_independent_ring_systems_stay_separate() {
+        // I19 §3.3: 縮環の共有原子 (分身を持つ) を、環ごとに独立した別々の
+        // 探索が「たまたま両方とも通過する」ことがある。その原子自身は
+        // ヘテロ原子でない単なる経由点でも、原子 ID ベースで union すると
+        // 無関係な 2 つの互変異性系が誤って 1 群に併合されてしまっていた
+        // (縮環ピラゾロピリジノール: 環外フェノール性 OH ↔ 環内ピリジン N
+        // の系と、ピラゾール環内 N-N-H の系は本来無関係)。到達原子がヘテロ
+        // のときだけ union するよう修正し、正しく 2 群に分離することを
+        // 確認する (実 InChI で検証済み)。
+        let g = build_molecule_graph("Oc1cc2[nH]ncc2cn1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 2);
+        let mut sizes: Vec<usize> = groups.iter().map(|(m, _)| m.len()).collect();
+        sizes.sort_unstable();
+        assert_eq!(sizes, vec![2, 2]);
+
+        // 対照: 正当な縮環越しブリッジ (共有原子が両環のヘテロ端点に直接
+        // 隣接する場合) は引き続き 1 群に統合される (I16 で検証済みの規則、
+        // 退行していないこと)。
+        let g = build_molecule_graph("Cc1[nH]nc2ncccc12").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3);
     }
 
     #[test]
