@@ -167,10 +167,19 @@ fn is_acceptor_agg(
 fn is_acceptor_from(
     g: &MoleculeGraph,
     kekule: &std::collections::HashMap<(usize, usize), f64>,
+    poisoned: &std::collections::HashSet<usize>,
     center: usize,
     nb: usize,
 ) -> bool {
-    if g.atoms[nb].is_aromatic {
+    // nb が橋頭ヘテロ原子を含む環 (poisoned) のメンバーの場合、その環の
+    // Kekule 構造は橋頭原子によって一意に固定されている (再 Kekule 化の
+    // 自由度がない) ため、nb 自身が「どこかに」実在二重結合を持つという
+    // 集約判定だけでは、center-nb の特定の結合がその二重結合の位置に
+    // なり得るとは限らない (I19 §3.4 追加修正)。この場合は集約判定を使わず
+    // 厳密な結合次数チェックにフォールバックする — 通常の (橋頭を含まない)
+    // 柔軟な環では、集約判定どおり Kekule 化の向きは任意選択に過ぎない
+    // ため従来どおり集約判定を使う。
+    if g.atoms[nb].is_aromatic && !poisoned.contains(&nb) {
         is_acceptor_agg(g, kekule, nb)
     } else {
         // 三重結合 (ニトリル等) は「二重結合を 1 本手放せる」受容体ではない
@@ -330,6 +339,7 @@ impl UnionFind {
 fn seed_groups(
     g: &MoleculeGraph,
     kekule: &std::collections::HashMap<(usize, usize), f64>,
+    poisoned: &std::collections::HashSet<usize>,
 ) -> (Vec<Vec<usize>>, std::collections::HashSet<usize>) {
     let n = g.atoms.len();
     let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -407,7 +417,7 @@ fn seed_groups(
             if !bond_from_center_is_double {
                 has_single_from_center = true;
             }
-            if is_acceptor_from(g, kekule, center, nb) {
+            if is_acceptor_from(g, kekule, poisoned, center, nb) {
                 endpoints.push(nb);
                 has_double = true;
             } else if n_h_of(g, nb) >= 1 || g.atoms[nb].formal_charge < 0 {
@@ -432,7 +442,7 @@ fn seed_groups(
             .collect();
         let os_double = os_ep
             .iter()
-            .any(|&e| is_acceptor_from(g, kekule, center, e));
+            .any(|&e| is_acceptor_from(g, kekule, poisoned, center, e));
         let os_donor = os_ep
             .iter()
             .any(|&e| n_h_of(g, e) >= 1 || g.atoms[e].formal_charge < 0);
@@ -495,14 +505,18 @@ fn seed_groups(
 pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     let n = g.atoms.len();
     let kekule = kekule_order_map(g);
-    let (seeds, excluded) = seed_groups(g, &kekule);
     // I19 §3.4: 橋頭ヘテロ原子を含む環 (とその融合相手の環) は、複数原子を
     // またぐブリッジ探索 (辺・孤立供与体起点) の対象から除外する
-    // (poisoned_ring_atoms 参照)。ただし単一中心の局所パターン
-    // ([`seed_groups`]、実在する二重結合を使う直接の O-C=N 型等) は、
-    // 橋頭原子の存在に関わらず常に有効 — 局所パターンは橋頭原子の容量には
-    // 一切依存しないため (I19 §3.4、コーパス実測で確認)。
+    // (poisoned_ring_atoms 参照)。単一中心の局所パターン
+    // ([`seed_groups`]) 自体は橋頭原子の存在に関わらず有効だが、
+    // `is_acceptor_from` の集約判定 (芳香族隣接原子が「どこかに」実在
+    // 二重結合を持てば受容体とみなす) は、その隣接原子が橋頭原子を含む
+    // 環のメンバーの場合は信頼できない (環の Kekule 構造が橋頭原子で
+    // 一意に固定されているため、隣接原子の実在二重結合が問題の結合位置に
+    // 移動できるとは限らない) ので、`seed_groups` にも渡して集約判定を
+    // 局所的に無効化する。
     let poisoned = poisoned_ring_atoms(g, &kekule);
+    let (seeds, excluded) = seed_groups(g, &kekule, &poisoned);
 
     // 縮環の共有原子 (2 つ以上の SSSR 環に属する原子) は、探索グラフ上では
     // 環ごとに別頂点に分裂させる (頂点分割)。ある環の辺だけを通って共有
@@ -1475,6 +1489,32 @@ mod tests {
         let groups = mobile_groups(&g);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0.len(), 3);
+    }
+
+    #[test]
+    fn mobile_h_aggregate_acceptor_disabled_in_bridgehead_ring() {
+        // I19 §3.4 追加修正: `is_acceptor_from` の集約判定 (芳香族隣接
+        // 原子がどこかに実在二重結合を持てば、center-nb の特定の結合が
+        // 単結合でも受容体とみなす) は、通常の柔軟な芳香環では正しい
+        // (Kekule 化の向きは任意選択に過ぎない) が、橋頭ヘテロ原子を含む
+        // 環では誤り — その環の Kekule 構造は橋頭原子によって一意に固定
+        // されているため、隣接原子の実在二重結合が center-nb の位置まで
+        // 移動できるとは限らない。
+        //
+        // `Oc1cn2cccc2cn1`: 環外フェノール性 OH が結合する炭素の実際の
+        // 二重結合は別の隣接炭素にあり、環内のもう一方の隣接 N (atom9) は
+        // 独立した実在二重結合を持つため集約判定では「受容体」に見えるが、
+        // その N は橋頭 N を含む環のメンバーであり、実際には橋渡しできない
+        // ため群は一切形成されないはず。
+        let g = build_molecule_graph("Oc1cn2cccc2cn1").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+
+        // 対照: 橋頭原子を持たない通常の柔軟な芳香環では、集約判定が
+        // 引き続き機能する (アミノピリジンの橋渡し、退行しないこと)。
+        let g = build_molecule_graph("CNc1ccncc1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
     }
 
     #[test]

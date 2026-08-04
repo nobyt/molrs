@@ -265,7 +265,18 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     `has_search_slack` を要求するよう修正 (通常の正当な中心は必ず
     //     自分自身の実在二重結合を持つため影響なし)。97.94% → 98.24%
     //     (+22)。
-    assert!(acc >= 0.982, "full InChI accuracy {acc:.4} < 0.982");
+    // I19 §3.4 追加修正 2 (2026-08-05): `is_acceptor_from` の集約判定
+    //     (芳香族隣接原子が「どこかに」実在二重結合を持てば center-nb の
+    //     特定の結合が単結合でも受容体とみなす、I12 由来) は通常の柔軟な
+    //     芳香環では正しいが、橋頭ヘテロ原子を含む環では誤り — その環の
+    //     Kekule 構造は橋頭原子で一意に固定されており、隣接原子の実在
+    //     二重結合が center-nb の位置まで移動できるとは限らない (例:
+    //     `Oc1cn2cccc2cn1` — 環外 OH の隣接 N は独立した実在二重結合を
+    //     持つため集約判定では受容体に見えるが、橋頭 N を含む環のメンバー
+    //     であり実際には橋渡しできない)。nb が橋頭を含む環のメンバーの
+    //     場合は集約判定を無効化し、厳密な結合次数チェックにフォール
+    //     バックするよう修正。98.24% → 98.75% (+38)。
+    assert!(acc >= 0.9874, "full InChI accuracy {acc:.4} < 0.9874");
 }
 
 #[test]
@@ -335,7 +346,7 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.982, "to_inchi_key accuracy {acc:.4} < 0.982");
-    // 注: full InChI 98.24% / key 98.27% (I19 §3.4 追加修正時点)
+    assert!(acc >= 0.9875, "to_inchi_key accuracy {acc:.4} < 0.9875");
+    // 注: full InChI 98.75% / key 98.80% (I19 §3.4 追加修正 2 時点)
     // 注: full InChI 97.42% / key 97.44% (I19 §3.2 精緻化時点)
 }
