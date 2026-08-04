@@ -233,7 +233,13 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     正しく環を分離しているので、非ヘテロの経由点まで union する
     //     必要はない)。広範囲に影響するバグで大幅改善。96.21% → 97.41%
     //     (+89)。
-    assert!(acc >= 0.974, "full InChI accuracy {acc:.4} < 0.974");
+    // I19 §3.2 追加修正 (2026-08-04): §3.2 の「末端一級 NH2 は酸対から
+    //     除外しない」規則が広すぎ、無置換のカルバミン酸 `NC(=O)O`
+    //     (NH2 も一級) まで誤って可動化していた (want は N 固定・O,O の
+    //     みが酸対)。中心が炭素かつ酸対が純粋に酸素だけ (アミド性、
+    //     ジチオカルバミン酸やスルファミン酸とは異なる) の場合に限り、
+    //     一級 NH2 でも除外を維持するよう精緻化。97.41% → 97.42%。
+    assert!(acc >= 0.9741, "full InChI accuracy {acc:.4} < 0.9741");
 }
 
 #[test]
@@ -303,6 +309,6 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.974, "to_inchi_key accuracy {acc:.4} < 0.974");
-    // 注: full InChI 97.41% / key 97.43% (I19 §3.3 時点)
+    assert!(acc >= 0.9741, "to_inchi_key accuracy {acc:.4} < 0.9741");
+    // 注: full InChI 97.42% / key 97.44% (I19 §3.2 精緻化時点)
 }
