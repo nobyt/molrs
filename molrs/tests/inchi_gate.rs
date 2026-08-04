@@ -251,7 +251,12 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     フラン型の次数 2 環ヘテロ原子 (橋頭ではない) や縮環飽和側の
     //     sp3 炭素も、次数 3 以上・芳香族限定の条件で正しく除外されない。
     //     97.42% → 97.61% (+19)。
-    assert!(acc >= 0.976, "full InChI accuracy {acc:.4} < 0.976");
+    // I19 §3.5 (2026-08-05): 複数の可動 H 群がある分子で、実 InChI は群を
+    //     メンバー数 (端点原子数) 昇順に出力するが、molrs は最小 canonical
+    //     番号昇順で出力していた (例: アルギニンは (H,11,12) [2 端点] が
+    //     (H4,8,9,10) [3 端点] より先であるべき)。ソートキーに群サイズを
+    //     追加。97.61% → 97.94% (+25)。
+    assert!(acc >= 0.979, "full InChI accuracy {acc:.4} < 0.979");
 }
 
 #[test]
@@ -321,7 +326,7 @@ fn to_inchi_key_matches_rdkit_where_produced() {
         acc * 100.0
     );
     // フル InChI 文字列一致と同率のはず (キー機構は非立体で完全)
-    assert!(acc >= 0.976, "to_inchi_key accuracy {acc:.4} < 0.976");
-    // 注: full InChI 97.61% / key 97.64% (I19 §3.4 時点)
+    assert!(acc >= 0.979, "to_inchi_key accuracy {acc:.4} < 0.979");
+    // 注: full InChI 97.94% / key 97.97% (I19 §3.5 時点)
     // 注: full InChI 97.42% / key 97.44% (I19 §3.2 精緻化時点)
 }

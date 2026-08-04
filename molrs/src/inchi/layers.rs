@@ -75,8 +75,11 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
                     (*mh, nums)
                 })
                 .collect();
-            // 出力順: 群の最小 canonical 番号昇順
-            mobile.sort_by_key(|(_, nums)| nums[0]);
+            // 出力順: 群のメンバー数 (端点原子数) 昇順、同数なら最小 canonical
+            // 番号昇順 (I19 §3.5、実 InChI で確認: 小さい群が先に来る。
+            // 例: アルギニンは (H,11,12) [2 端点] が (H4,8,9,10) [3 端点] より
+            // 先)。
+            mobile.sort_by_key(|(_, nums)| (nums.len(), nums[0]));
 
             Component {
                 inv: inv.clone(),
@@ -347,5 +350,16 @@ mod tests {
         assert_eq!(layers("CC(=O)O").1, "1H3,(H,3,4)");
         assert_eq!(layers("CC(=O)N").1, "1H3,(H2,3,4)");
         assert_eq!(layers("OCC(=O)O").1, "3H,1H2,(H,4,5)");
+    }
+
+    #[test]
+    fn hydrogen_mobile_groups_sorted_by_size_ascending() {
+        // I19 §3.5: 複数の可動 H 群があるとき、実 InChI はメンバー数
+        // (端点原子数) の少ない群を先に出す (最小 canonical 番号の昇順では
+        // ない)。アルギニン: グアニジノ基の 3 端点・可動 H4 の群より、
+        // カルボキシルの 2 端点・可動 H1 の群が先。
+        let g = build_molecule_graph("NC(CCCNC(N)=N)C(=O)O").unwrap();
+        let h = crate::inchi::to_inchi(&g).unwrap();
+        assert!(h.ends_with(",(H,11,12)(H4,8,9,10)"), "got: {h}");
     }
 }
