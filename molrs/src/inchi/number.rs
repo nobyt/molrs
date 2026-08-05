@@ -1272,7 +1272,51 @@ fn refine(atoms: &[NAtom], ranks: &mut [usize]) -> usize {
 }
 
 /// (辺シグネチャ, 番号付け) — 最小化の候補。
-type Candidate = (Vec<(usize, usize)>, Vec<usize>);
+/// 番号付けの比較キー: (c 層, h 層, q 層) の順。InChI が層を並べる順序と同じで、
+/// 前の層で差が付かない番号付けだけが次の層で比較される。
+type CandKey = (
+    Vec<(usize, usize)>,
+    Vec<(u8, Vec<usize>)>,
+    Vec<(i8, Vec<usize>)>,
+);
+type Candidate = (CandKey, Vec<usize>);
+
+/// 番号付け → h 層の比較キー。
+///
+/// h 層は固定 H 数の昇順にグループ化され (`1-3H,4H2,5H3`)、各グループ内は
+/// 番号の昇順に並ぶ。**H を持たない原子は現れない**。番号付けは置換なので
+/// 「どの H 数がいくつ現れるか」は候補間で不変であり、(H 数, 番号昇順リスト)
+/// を H 数昇順に並べた列の辞書順比較が、印字される文字列の比較と一致する。
+fn h_signature(atoms: &[NAtom], numbering: &[usize]) -> Vec<(u8, Vec<usize>)> {
+    let mut by_k: std::collections::BTreeMap<u8, Vec<usize>> = std::collections::BTreeMap::new();
+    for (i, a) in atoms.iter().enumerate() {
+        if a.n_h > 0 {
+            by_k.entry(a.n_h).or_default().push(numbering[i]);
+        }
+    }
+    by_k.into_iter()
+        .map(|(k, mut v)| {
+            v.sort_unstable();
+            (k, v)
+        })
+        .collect()
+}
+
+/// 番号付け → q (電荷) 層の比較キー。h 層と同じ作りで、電荷 0 の原子は現れない。
+fn q_signature(atoms: &[NAtom], numbering: &[usize]) -> Vec<(i8, Vec<usize>)> {
+    let mut by_q: std::collections::BTreeMap<i8, Vec<usize>> = std::collections::BTreeMap::new();
+    for (i, a) in atoms.iter().enumerate() {
+        if a.charge != 0 {
+            by_q.entry(a.charge).or_default().push(numbering[i]);
+        }
+    }
+    by_q.into_iter()
+        .map(|(q, mut v)| {
+            v.sort_unstable();
+            (q, v)
+        })
+        .collect()
+}
 
 /// 番号付け → InChI 接続表の比較キー。
 /// InChI の c 層は「原子 k (2..n) ごとに、より小さい番号の隣接」を並べる。
@@ -1301,9 +1345,13 @@ fn resolve(atoms: &[NAtom], ranks: &[usize], budget: &mut usize, best: &mut Opti
     if n_classes == n {
         // 全原子が一意ランク → ランク昇順に 0..n を割り当て
         let numbering = ranks.clone(); // rank i (0..n) = canonical番号
-        let sig = edge_signature(atoms, &numbering);
-        if best.as_ref().map(|(s, _)| &sig < s).unwrap_or(true) {
-            *best = Some((sig, numbering));
+        let key = (
+            edge_signature(atoms, &numbering),
+            h_signature(atoms, &numbering),
+            q_signature(atoms, &numbering),
+        );
+        if best.as_ref().map(|(k, _)| &key < k).unwrap_or(true) {
+            *best = Some((key, numbering));
         }
         return;
     }
@@ -1350,30 +1398,38 @@ fn ranks_from_keys<K: Ord>(keys: &[K]) -> Vec<usize> {
 ///
 /// InChI の多段正準化 (実測から再構成):
 /// 1. トポロジーのみ (元素 + 次数、結合次数なし) で精緻化
-/// 2. 固定 H 数 (+t-group フラグ) を加えて精緻化 (H 昇順)
-/// 3. 電荷を加えて精緻化
-/// 4. 残る同値類は分岐し、InChI 接続表 (edge_signature) 最小の番号を採用
+/// 2. t-group フラグを加えて精緻化
+/// 3. 残る同値類は分岐し、(c 層, h 層, q 層) が辞書順最小の番号を採用
+///
+/// **固定 H 数と電荷は精緻化の順序キーには使わない**。これらは「同値類内で
+/// どちらが小さい番号か」を per-atom に決めてしまうが、実 InChI は骨格
+/// (H なし) の正準化で残った自己同型の中から **h 層・q 層の文字列を最小化
+/// する**番号付けを選ぶ。両者は一致しない:
+///
+/// - per-atom に H 昇順とすると、シアナミド `NC#N` の 2 つの N (骨格上は
+///   対称) で H を持たないニトリル N が先になり `h3H2` になってしまう。
+///   実 InChI は `h2H2` (NH2 が 2 番)。
+/// - 逆に per-atom に「H を持つ方が先」とすると、1-ブチン `C#CCC` で
+///   CH2 が 3 番になり `h1H,3H2,2H3`。実 InChI は `h1H,4H2,2H3` —
+///   末端の選択 (1↔2) と中間の選択 (3↔4) は骨格の自己同型として**連動**
+///   しており、per-atom な基準では表せない。
+///
+/// 文字列最小化として扱えば両方とも自然に出る。電荷も同様で、層の順序が
+/// c → h → q なので、メチルイソシアニド `[C-]#[N+]C` は電荷ではなく先に
+/// h 層で決まり `h1H3` (CH3 が 1 番) になる。
 fn number_component(atoms: &[NAtom]) -> Vec<usize> {
     // 段 1: (元素, 次数)
     let keys1: Vec<(&(u8, String), usize)> =
         atoms.iter().map(|a| (&a.elem_key, a.degree)).collect();
     let mut ranks = ranks_from_keys(&keys1);
     refine(atoms, &mut ranks);
-    // 段 2: + (t-group, 固定 H)
-    let keys2: Vec<(usize, bool, u8)> = atoms
+    // 段 2: + t-group フラグ (可動 H 群のメンバーは非メンバーと区別される)
+    let keys2: Vec<(usize, bool)> = atoms
         .iter()
         .enumerate()
-        .map(|(i, a)| (ranks[i], a.in_tgroup, a.n_h))
+        .map(|(i, a)| (ranks[i], a.in_tgroup))
         .collect();
     ranks = ranks_from_keys(&keys2);
-    refine(atoms, &mut ranks);
-    // 段 3: + 電荷
-    let keys3: Vec<(usize, i8)> = atoms
-        .iter()
-        .enumerate()
-        .map(|(i, a)| (ranks[i], a.charge))
-        .collect();
-    ranks = ranks_from_keys(&keys3);
     refine(atoms, &mut ranks);
 
     let mut budget = 5000usize;

@@ -124,7 +124,9 @@ fn canonical_numbering_matches_auxinfo() {
     // - イソシアニド等の電荷正規化差 — I4
     // - 環内 N 互変異性 (ベンズイミダゾリン等) — v2
     // - 立体依存タイブレーク (E/Z 対称分子) — 骨格層の文字列には影響しない
-    assert!(rate >= 0.985, "numbering match rate {rate:.4} < 0.985");
+    // I26 (2026-08-05): h/q 層を per-atom 不変量から文字列最小化に変更。
+    //     99.38% → 99.53%。
+    assert!(rate >= 0.995, "numbering match rate {rate:.4} < 0.995");
 }
 
 #[test]
@@ -330,7 +332,14 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     1,5 シフト (4-ヒドロキシ/アミノクマリン — ラクトン O が二重結合も H も
     //     持たず環を塞ぐ) まで拾っていた。1,2 / 1,3 / 「交互環を経由する 1,5」
     //     だけを許す。99.75% → 99.83% (+6)。
-    assert!(acc >= 0.9982, "full InChI accuracy {acc:.4} < 0.9982");
+    // I26: 固定 H 数・電荷を精緻化の順序キーから外し、(c 層, h 層, q 層) の
+    //     辞書順最小化として resolve のタイブレークに移した。実 InChI は骨格の
+    //     自己同型の中から層の文字列を最小化する番号を選ぶので、per-atom な
+    //     H 昇順ではシアナミド `NC#N` (`h2H2`) やイソシアニド (`h1H3`)、
+    //     α-ヒドロキシケトン (`h5,7H`) を誤る。逆に「H を持つ方が先」だけでも
+    //     1-ブチン `C#CCC` (`h1H,4H2,2H3`、末端と中間の選択が連動) を誤る。
+    //     99.83% → 99.97% (+11)。
+    assert!(acc >= 0.9996, "full InChI accuracy {acc:.4} < 0.9996");
 }
 
 #[test]
@@ -405,7 +414,8 @@ fn to_inchi_key_matches_rdkit_where_produced() {
     // I23 (2026-08-05): poisoning 近似の撤去。99.39% → 99.61%。
     // I24 (2026-08-05): BNS t-group ハブ。99.61% → 99.78%。
     // I25 (2026-08-05): シフト位置条件でブリッジ探索を制限。99.78% → 99.86%。
-    assert!(acc >= 0.9985, "to_inchi_key accuracy {acc:.4} < 0.9985");
+    // I26 (2026-08-05): h/q 層の文字列最小化。99.86% → 99.99%。
+    assert!(acc >= 0.9998, "to_inchi_key accuracy {acc:.4} < 0.9998");
     // 注: full InChI 98.75% / key 98.80% (I19 §3.4 追加修正 2 時点)
     // 注: full InChI 97.42% / key 97.44% (I19 §3.2 精緻化時点)
 }
