@@ -34,7 +34,7 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
             .count() as u8
     };
 
-    numbering
+    let mut comps: Vec<Component> = numbering
         .iter()
         .map(|inv| {
             let n = inv.len();
@@ -89,7 +89,10 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
                 mobile,
             }
         })
-        .collect()
+        .collect();
+    // 成分順序は式層と共通の規則 (I20)
+    comps.sort_by_key(|c| super::formula::component_sort_key(g, &c.inv));
+    comps
 }
 
 /// c 層の本体 (先頭の `c` は含めない)。単一成分。

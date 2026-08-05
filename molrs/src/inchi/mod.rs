@@ -11,6 +11,7 @@
 
 pub mod base26;
 pub(crate) mod blossom;
+pub(crate) mod disconnect;
 pub(crate) mod formula;
 pub(crate) mod layers;
 pub(crate) mod normalize;
@@ -47,25 +48,110 @@ pub fn formula(g: &MoleculeGraph) -> String {
     formula::formula_layer(g)
 }
 
-/// 標準 InChI (`InChI=1S/…`) を生成する (v1 範囲)。
+/// 成分ごとの層文字列を `;` で連結する (I20)。
 ///
-/// v1 は単一成分。電荷は q/p 層で中性化して扱う。多成分・同位体・有機金属・
-/// 多中心の環互変異性は未対応で [`InchiError::Unsupported`] を返す。
+/// 連続する同一の非空文字列は `N*` で圧縮する (`c2*1-2;` = 同一成分 2 つ +
+/// 空の成分 1 つ)。空文字列は圧縮せず `;` を並べる。全成分が空なら空文字列を
+/// 返し、呼び出し側が層自体を省略する (`InChI=1S/Bi.3H` に c/h 層がないのは
+/// このため)。
+fn join_components(parts: &[String]) -> String {
+    if parts.iter().all(|s| s.is_empty()) {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < parts.len() {
+        let mut j = i + 1;
+        while j < parts.len() && parts[j] == parts[i] {
+            j += 1;
+        }
+        let count = j - i;
+        if i > 0 {
+            out.push(';');
+        }
+        if parts[i].is_empty() {
+            // 空成分の連続: 区切りだけを並べる
+            for _ in 1..count {
+                out.push(';');
+            }
+        } else {
+            if count > 1 {
+                out.push_str(&count.to_string());
+                out.push('*');
+            }
+            out.push_str(&parts[i]);
+        }
+        i = j;
+    }
+    out
+}
+
+/// 標準 InChI (`InChI=1S/…`) を生成する。
+///
+/// 電荷は q/p 層で中性化して扱う。金属結合は標準 InChI の規約どおり切断し
+/// (I20、[`disconnect`])、多成分は `;` 区切りで直列化する。同位体 (`i`) と
+/// 多中心の環互変異性の一部は未対応。
 pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
+    // 金属結合の切断 (標準 InChI は disconnected-metal 表現) → 電荷正規化
+    let dg = disconnect::disconnect_metals(g);
     // 電荷正規化 (負の酸点を中性化・陽イオンを脱プロトン、残余 → q、移動 → p)
-    let (ng, q, p) = normalize::neutralize(g);
+    let (ng, _q, p) = normalize::neutralize(&dg);
     let g = &ng;
 
     let comps = layers::build_components(g);
-    if comps.len() != 1 {
-        return Err(InchiError::Unsupported("multi-component (v2)".into()));
-    }
+    // 重原子を含まない H だけの成分 (常に末尾)。c/q/立体層には何も寄与せず、
+    // h 層だけ水素分子 `[H][H]` が `1H` を出す。
+    let h_sizes = disconnect::hydrogen_component_sizes(g);
+    let pad = |mut v: Vec<String>| {
+        v.resize(v.len() + h_sizes.len(), String::new());
+        v
+    };
+    let pad_h = |mut v: Vec<String>| {
+        v.extend(
+            h_sizes
+                .iter()
+                .map(|&k| disconnect::hydrogen_component_h_layer(k)),
+        );
+        v
+    };
 
     let formula = formula::formula_layer(g);
-    let c = layers::connection_layer(&comps[0]);
-    let h = layers::hydrogen_layer(&comps[0]);
-    let b = stereo::double_bond_layer(g, &comps[0]);
-    let (t, m, s_char) = stereo::tetrahedral_layers(g, &comps[0]);
+    let c = join_components(&pad(comps.iter().map(layers::connection_layer).collect()));
+    let h = join_components(&pad_h(comps.iter().map(layers::hydrogen_layer).collect()));
+    // /q は成分ごとの残余電荷 (中性成分は空欄)
+    let q_parts: Vec<String> = comps
+        .iter()
+        .map(|comp| {
+            let sum: i32 = comp
+                .inv
+                .iter()
+                .map(|&a| g.atoms[a].formal_charge as i32)
+                .sum();
+            if sum == 0 {
+                String::new()
+            } else {
+                format!("{sum:+}")
+            }
+        })
+        .collect();
+    let q = join_components(&pad(q_parts));
+    let b = join_components(&pad(comps
+        .iter()
+        .map(|c| stereo::double_bond_layer(g, c))
+        .collect()));
+    let tms: Vec<(String, Option<char>, Option<char>)> = comps
+        .iter()
+        .map(|c| stereo::tetrahedral_layers(g, c))
+        .collect();
+    let t = join_components(&pad(tms.iter().map(|x| x.0.clone()).collect()));
+    let m = join_components(&pad(tms
+        .iter()
+        .map(|x| x.1.map(String::from).unwrap_or_default())
+        .collect()));
+    let s_char = join_components(&pad(tms
+        .iter()
+        .map(|x| x.2.map(String::from).unwrap_or_default())
+        .collect()));
 
     let mut out = format!("InChI=1S/{formula}");
     if !c.is_empty() {
@@ -77,8 +163,9 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
         out.push_str(&h);
     }
     // 電荷層 (h の後、立体の前): /q 残余電荷、/p プロトン化
-    if q != 0 {
-        out.push_str(&format!("/q{q:+}"));
+    if !q.is_empty() {
+        out.push_str("/q");
+        out.push_str(&q);
     }
     if p != 0 {
         out.push_str(&format!("/p{p:+}"));
@@ -92,13 +179,13 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
         out.push_str("/t");
         out.push_str(&t);
     }
-    if let Some(m) = m {
+    if !m.is_empty() {
         out.push_str("/m");
-        out.push(m);
+        out.push_str(&m);
     }
-    if let Some(sc) = s_char {
+    if !s_char.is_empty() {
         out.push_str("/s");
-        out.push(sc);
+        out.push_str(&s_char);
     }
     Ok(out)
 }
@@ -131,5 +218,76 @@ mod tests {
     fn formula_public_api() {
         let g = build_molecule_graph("CC(=O)O").unwrap();
         assert_eq!(formula(&g), "C2H4O2");
+    }
+
+    fn inchi(smiles: &str) -> String {
+        inchi_of(smiles).unwrap()
+    }
+
+    /// 標準 InChI は金属結合を切断する (I20)。等方開裂 (金属-C/H) では電荷が
+    /// 付かず、異方開裂 (金属-ハロゲン) では `/q`+`/p` が現れる。
+    #[test]
+    fn metal_bonds_are_disconnected() {
+        assert_eq!(inchi("C[Hg]C"), "InChI=1S/2CH3.Hg/h2*1H3;");
+        assert_eq!(inchi("C[Sn](C)(C)C"), "InChI=1S/4CH3.Sn/h4*1H3;");
+        assert_eq!(inchi("CC[Hg]CC"), "InChI=1S/2C2H5.Hg/c2*1-2;/h2*1H2,2H3;");
+        assert_eq!(inchi("C[Hg]Cl"), "InChI=1S/CH3.ClH.Hg/h1H3;1H;/q;;+1/p-1");
+        assert_eq!(
+            inchi("CC[Hg]Br"),
+            "InChI=1S/C2H5.BrH.Hg/c1-2;;/h1H2,2H3;1H;/q;;+1/p-1"
+        );
+    }
+
+    /// 金属水素化物は金属-H も切れ、H が独立成分になる (c/h 層は空欄のまま)。
+    #[test]
+    fn metal_hydrides_split_off_bare_hydrogens() {
+        assert_eq!(inchi("[BiH3]"), "InChI=1S/Bi.3H");
+        assert_eq!(inchi("[SnH4]"), "InChI=1S/Sn.4H");
+        assert_eq!(inchi("C[PbH3]"), "InChI=1S/CH3.Pb.3H/h1H3;;;;");
+        assert_eq!(
+            inchi("CC[SnH2]CC"),
+            "InChI=1S/2C2H5.Sn.2H/c2*1-2;;;/h2*1H2,2H3;;;"
+        );
+    }
+
+    /// 水素分子は「骨格原子 1 個 + 結合 H 1 個」の単一成分 (孤立 H とは別扱い)。
+    #[test]
+    fn dihydrogen_is_a_single_component() {
+        assert_eq!(inchi("[H][H]"), "InChI=1S/H2/h1H");
+    }
+
+    /// 塩は成分ごとに層が `;` で区切られ、`/q` は成分ごと・`/p` は全体で 1 つ。
+    #[test]
+    fn salts_serialize_per_component() {
+        assert_eq!(
+            inchi("[Na+].CC(=O)[O-]"),
+            "InChI=1S/C2H4O2.Na/c1-2(3)4;/h1H3,(H,3,4);/q;+1/p-1"
+        );
+        assert_eq!(
+            inchi("[K+].[K+].[O-]C(=O)CCC(=O)[O-]"),
+            "InChI=1S/C4H6O4.2K/c5-3(6)1-2-4(7)8;;/h1-2H2,(H,5,6)(H,7,8);;/q;2*+1/p-2"
+        );
+        assert_eq!(
+            inchi("[NH4+].CC(=O)[O-]"),
+            "InChI=1S/C2H4O2.H3N/c1-2(3)4;/h1H3,(H,3,4);1H3"
+        );
+    }
+
+    /// 成分順序は「炭素を含む成分が先 → 重原子数昇順」。硫酸ナトリウムは
+    /// 炭素がないため Na (重原子 1) が H2O4S (重原子 5) より先に来る。
+    #[test]
+    fn component_order_puts_carbon_first_then_smallest() {
+        assert_eq!(
+            inchi("[Na+].[Na+].[O-]S(=O)(=O)[O-]"),
+            "InChI=1S/2Na.H2O4S/c;;1-5(2,3)4/h;;(H2,1,2,3,4)/q2*+1;/p-2"
+        );
+    }
+
+    /// 非金属 (B/Si/As/Te) は切断されない — 金属表の境界の回帰テスト。
+    #[test]
+    fn metalloids_stay_connected() {
+        assert_eq!(inchi("CC[AsH2]"), "InChI=1S/C2H7As/c1-2-3/h2-3H2,1H3");
+        assert!(!inchi("Br[SiH2]C").contains('.'));
+        assert!(!inchi("CB(O)O").contains('.'));
     }
 }

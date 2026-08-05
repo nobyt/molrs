@@ -133,6 +133,42 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
             kekule.push(1.0);
         }
     }
+    // 金属切断で生じた孤立 H (どの重原子にも結合しない) は独立成分として
+    // 保持する必要がある (`[BiH3]` → `Bi.3H`)。上のループは重原子に結合した
+    // H しか再生成しないため、ここで補う (I20)。
+    let mut h_remap: HashMap<usize, usize> = HashMap::new();
+    for old in 0..g.atoms.len() {
+        let is_lone_h = g.atoms[old].symbol == "H"
+            && !g.adjacency[old].iter().any(|&nb| g.atoms[nb].symbol != "H");
+        if !is_lone_h {
+            continue;
+        }
+        let h_idx = atoms.len();
+        h_remap.insert(old, h_idx);
+        atoms.push(AtomInfo {
+            idx: h_idx,
+            symbol: "H".into(),
+            atomic_num: 1,
+            is_aromatic: false,
+            in_ring: false,
+            num_hs: 0,
+            chiral_tag: None,
+            formal_charge: 0,
+        });
+    }
+    // 孤立 H 同士の結合 (水素分子 `[H][H]`) は成分としてまとめる必要があるので
+    // 保持する。金属水素化物由来の H は互いに結合していないので何も増えない。
+    for (bi, b) in g.bonds.iter().enumerate() {
+        if let (Some(&i), Some(&j)) = (h_remap.get(&b.begin_idx), h_remap.get(&b.end_idx)) {
+            bonds.push(BondInfo {
+                begin_idx: i,
+                end_idx: j,
+                bond_order: b.bond_order,
+                stereo: None,
+            });
+            kekule.push(g.kekule_bond_orders[bi]);
+        }
+    }
     // idx を振り直し (重原子は不変、H は末尾)
     for (i, a) in atoms.iter_mut().enumerate() {
         a.idx = i;
