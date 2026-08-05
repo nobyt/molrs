@@ -15,24 +15,42 @@ use super::number::connected_components;
 
 /// 成分の並び順キー (I20)。
 ///
-/// 実 InChI の多成分順序をコーパス 32 例から導出した規則:
-/// **炭素を含む成分が先 → 重原子数の昇順 → H 数の降順 → 式の辞書順昇順**。
+/// 実 InChI の多成分順序 (I29):
+/// **炭素数の降順 → 重原子数の降順 → H 数の降順 → 式の辞書順昇順**。
 ///
-/// - 炭素優先は Hill 式の思想と同じ: 硫酸ナトリウムが `2Na.H2O4S` (Na が先)
-///   なのに安息香酸カリウムが `C7H6O2.K` (有機が先) になるのは、後者だけが
-///   炭素を含むため。重原子数だけでは説明できない。
-/// - 重原子数**昇順**: `2Na.H2O4S` は Na (重原子 1) が H2O4S (重原子 5) より
-///   先に来る。
+/// - 炭素数**降順**が主キー。PubChem 実データ 863 件の多成分分子で
+///   例外なく成立する。安息香酸カリウム `C7H6O2.K` も硫酸ナトリウム
+///   `2Na.H2O4S` (どちらも炭素数 0) もこれで説明でき、`C6H5.C2H4O2.Hg` の
+///   ように炭素数の大きい成分が先に来るのが本質。
+/// - 重原子数**降順**が第 2 キー: `C10H11O.C5H5.Fe`、`C9H12O.3CO.Fe`。
 /// - H 数降順は重原子数が並んだときの決定打: `CH3.ClH.Hg` の ClH (H 1 個) が
 ///   Hg (H 0 個) より先。
 ///
 /// 金属から切り離された孤立 H 成分は重原子 0 個でこの比較に載らないため、
 /// 呼び出し側 ([`formula_layer`]) が常に末尾へ追加する (`Bi.3H`)。
+///
+/// # 既知の残差 (無機塩)
+///
+/// アルカリ金属塩など「単原子カチオン + 多原子アニオン」で、実 InChI は
+/// カチオンを先に置くことがある (`2Na.H2O4S`、`5Na.H3O4P.H2O3S`、
+/// `Cu.N2O4.2NO3`)。一方 `FH.O3Si.2Zn` は単原子の Zn が最後に来るので
+/// 「単原子金属を先頭」という規則では説明できず、電荷層との関係も含めて
+/// 未解明。PubChem 863 件中 33 件 (3.8%) がこの系統で残る。
+///
+/// 旧実装は重原子数**昇順**だったが、これはリポジトリ内コーパスの
+/// 多成分 32 例 (`2Na.H2O4S` 系が多数) に過適合したもので、PubChem 実データ
+/// では 33.7% しか再現できなかった。本規則は 96.2%。
 pub(crate) fn component_sort_key(
     g: &MoleculeGraph,
     atoms: &[usize],
-) -> (bool, usize, std::cmp::Reverse<usize>, String) {
-    let has_carbon = atoms.iter().any(|&a| g.atoms[a].symbol == "C");
+) -> (
+    std::cmp::Reverse<usize>,
+    std::cmp::Reverse<usize>,
+    std::cmp::Reverse<usize>,
+    String,
+) {
+    use std::cmp::Reverse;
+    let n_c = atoms.iter().filter(|&&a| g.atoms[a].symbol == "C").count();
     let h = atoms
         .iter()
         .map(|&a| {
@@ -43,9 +61,9 @@ pub(crate) fn component_sort_key(
         })
         .sum::<usize>();
     (
-        !has_carbon,
-        atoms.len(),
-        std::cmp::Reverse(h),
+        Reverse(n_c),
+        Reverse(atoms.len()),
+        Reverse(h),
         component_formula(g, atoms),
     )
 }

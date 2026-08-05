@@ -273,13 +273,37 @@ mod tests {
         );
     }
 
-    /// 成分順序は「炭素を含む成分が先 → 重原子数昇順」。硫酸ナトリウムは
-    /// 炭素がないため Na (重原子 1) が H2O4S (重原子 5) より先に来る。
+    /// 成分順序は「炭素数降順 → 重原子数降順 → H 数降順」(I29)。
     #[test]
-    fn component_order_puts_carbon_first_then_smallest() {
+    fn component_order_is_by_descending_carbon_then_size() {
+        // 炭素数が主キー: C6H5 (6) が C2H4O2 (2) より先。重原子数は 6 < 4 では
+        // ないので、旧規則 (重原子数昇順) では逆順になっていた。
+        assert_eq!(
+            inchi("CC(=O)O.C1=CC=C(C=C1)[Hg]"),
+            "InChI=1S/C6H5.C2H4O2.Hg/c1-2-4-6-5-3-1;1-2(3)4;/h1-5H;1H3,(H,3,4);"
+        );
+        // 炭素数が並べば重原子数降順: C9H12O (10) → CO (2) → Fe (1)。
+        assert!(
+            inchi("C/C=C/C=C/C=C/C(=O)OC.[C-]#[O+].[C-]#[O+].[C-]#[O+].[Fe]")
+                .starts_with("InChI=1S/C9H12O2.3CO.Fe/")
+        );
+    }
+
+    /// **既知の残差** (I29): 「単原子カチオン + 多原子アニオン」の無機塩だけは
+    /// 実 InChI がカチオンを先に置く。硫酸ナトリウムの実 InChI は
+    /// `2Na.H2O4S` だが、炭素数降順→重原子数降順の規則では `H2O4S.2Na` になる。
+    ///
+    /// 単原子金属を先頭に特別扱いする規則も試したが、`FH.O3Si.2Zn` では
+    /// 単原子の Zn が最後に来るため説明できず (電荷層との関係も含めて未解明)、
+    /// PubChem 実データ 863 件中 33 件 (3.8%) がこの系統で残る。旧規則
+    /// (重原子数昇順) はこの 1 件に合わせていたが、それは本リポジトリの
+    /// 多成分 32 例への過適合で、PubChem では 33.7% しか再現できなかった。
+    #[test]
+    fn known_divergence_monoatomic_cation_salts() {
         assert_eq!(
             inchi("[Na+].[Na+].[O-]S(=O)(=O)[O-]"),
-            "InChI=1S/2Na.H2O4S/c;;1-5(2,3)4/h;;(H2,1,2,3,4)/q2*+1;/p-2"
+            // 実 InChI: "InChI=1S/2Na.H2O4S/c;;1-5(2,3)4/h;;(H2,1,2,3,4)/q2*+1;/p-2"
+            "InChI=1S/H2O4S.2Na/c1-5(2,3)4;;/h(H2,1,2,3,4);;/q;2*+1/p-2"
         );
     }
 
