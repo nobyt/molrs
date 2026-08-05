@@ -1272,14 +1272,53 @@ fn refine(atoms: &[NAtom], ranks: &mut [usize]) -> usize {
 }
 
 /// (辺シグネチャ, 番号付け) — 最小化の候補。
-/// 番号付けの比較キー: (c 層, h 層, q 層) の順。InChI が層を並べる順序と同じで、
-/// 前の層で差が付かない番号付けだけが次の層で比較される。
+/// 番号付けの比較キー: (c 層, h 層, q 層, b 層) の順。InChI が層を並べる順序と
+/// 同じで、前の層で差が付かない番号付けだけが次の層で比較される。
 type CandKey = (
     Vec<(usize, usize)>,
     Vec<(u8, Vec<usize>)>,
     Vec<(i8, Vec<usize>)>,
+    Vec<(usize, usize, u8)>,
 );
 type Candidate = (CandKey, Vec<usize>);
+
+/// `/b` 層のタイブレークに使う二重結合立体の情報 (すべてローカル idx)。
+///
+/// パリティは「正準番号が最大の隣接どうしが二重結合の同じ側か反対側か」で
+/// 決まる ([`super::stereo::double_bond_layer`] と同じ規則) ため、番号付けに
+/// 依存する。候補ごとに再計算できるよう、番号非依存の材料だけを持つ。
+struct BStereo {
+    a: usize,
+    c: usize,
+    /// a 側の非 H・非 c 隣接 (ローカル idx)
+    na: Vec<usize>,
+    nc: Vec<usize>,
+    /// CIP ランク最大の隣接 (molrs の E/Z の基準)
+    cip_hi_a: usize,
+    cip_hi_c: usize,
+    /// CIP 基準で最高隣接が反対側か (E なら true)
+    opposite_cip: bool,
+}
+
+/// 番号付け → b 層の比較キー。
+///
+/// 印字は `hi-lo{+|-}` を (hi, lo) 昇順に並べたもの。InChI の内部パリティは
+/// 奇 (`-`) = 1 < 偶 (`+`) = 2 なので、同じ番号なら `-` の側が小さい。
+fn b_signature(bs: &[BStereo], numbering: &[usize]) -> Vec<(usize, usize, u8)> {
+    let mut e: Vec<(usize, usize, u8)> = bs
+        .iter()
+        .map(|b| {
+            let canon_hi =
+                |ns: &[usize]| *ns.iter().max_by_key(|&&x| numbering[x]).expect("nonempty");
+            let flip = (b.cip_hi_a != canon_hi(&b.na)) ^ (b.cip_hi_c != canon_hi(&b.nc));
+            let opposite_canon = b.opposite_cip ^ flip;
+            let (ca, cc) = (numbering[b.a], numbering[b.c]);
+            (ca.max(cc), ca.min(cc), u8::from(opposite_canon))
+        })
+        .collect();
+    e.sort_unstable();
+    e
+}
 
 /// 番号付け → h 層の比較キー。
 ///
@@ -1337,7 +1376,13 @@ fn edge_signature(atoms: &[NAtom], numbering: &[usize]) -> Vec<(usize, usize)> {
 
 /// 精緻化されたランクから正準番号を確定する。同値類が残る場合は
 /// 各メンバーで分岐し、辺シグネチャが辞書順最小となる番号付けを採る。
-fn resolve(atoms: &[NAtom], ranks: &[usize], budget: &mut usize, best: &mut Option<Candidate>) {
+fn resolve(
+    atoms: &[NAtom],
+    bs: &[BStereo],
+    ranks: &[usize],
+    budget: &mut usize,
+    best: &mut Option<Candidate>,
+) {
     let n = atoms.len();
     let mut ranks = ranks.to_vec();
     let n_classes = refine(atoms, &mut ranks);
@@ -1349,6 +1394,7 @@ fn resolve(atoms: &[NAtom], ranks: &[usize], budget: &mut usize, best: &mut Opti
             edge_signature(atoms, &numbering),
             h_signature(atoms, &numbering),
             q_signature(atoms, &numbering),
+            b_signature(bs, &numbering),
         );
         if best.as_ref().map(|(k, _)| &key < k).unwrap_or(true) {
             *best = Some((key, numbering));
@@ -1380,7 +1426,7 @@ fn resolve(atoms: &[NAtom], ranks: &[usize], budget: &mut usize, best: &mut Opti
                 *r += 1;
             }
         }
-        resolve(atoms, &branched, budget, best);
+        resolve(atoms, bs, &branched, budget, best);
     }
 }
 
@@ -1417,7 +1463,7 @@ fn ranks_from_keys<K: Ord>(keys: &[K]) -> Vec<usize> {
 /// 文字列最小化として扱えば両方とも自然に出る。電荷も同様で、層の順序が
 /// c → h → q なので、メチルイソシアニド `[C-]#[N+]C` は電荷ではなく先に
 /// h 層で決まり `h1H3` (CH3 が 1 番) になる。
-fn number_component(atoms: &[NAtom]) -> Vec<usize> {
+fn number_component(atoms: &[NAtom], bs: &[BStereo]) -> Vec<usize> {
     // 段 1: (元素, 次数)
     let keys1: Vec<(&(u8, String), usize)> =
         atoms.iter().map(|a| (&a.elem_key, a.degree)).collect();
@@ -1434,7 +1480,7 @@ fn number_component(atoms: &[NAtom]) -> Vec<usize> {
 
     let mut budget = 5000usize;
     let mut best: Option<Candidate> = None;
-    resolve(atoms, &ranks, &mut budget, &mut best);
+    resolve(atoms, bs, &ranks, &mut budget, &mut best);
     best.map(|(_, num)| num).unwrap_or_else(|| {
         let mut r = ranks.clone();
         refine(atoms, &mut r);
@@ -1442,17 +1488,63 @@ fn number_component(atoms: &[NAtom]) -> Vec<usize> {
     })
 }
 
+/// 成分内の立体二重結合を [`BStereo`] (ローカル idx) に変換する。
+///
+/// 対象は [`super::stereo::double_bond_layer`] が `/b` に出すものと同じ
+/// 「構成が定義済み (`b.stereo`) で両端に非 H 隣接がある」二重結合だけ。
+/// 未定義 (`?`) の立体源性二重結合は番号付けに依らず `?` と印字されるので
+/// タイブレークには効かない。
+fn build_bstereo(g: &MoleculeGraph, atoms: &[usize], cip: &[usize]) -> Vec<BStereo> {
+    let mut local = std::collections::HashMap::new();
+    for (li, &gi) in atoms.iter().enumerate() {
+        local.insert(gi, li);
+    }
+    let ez_nbrs = |end: usize, other: usize| -> Vec<usize> {
+        g.adjacency[end]
+            .iter()
+            .filter(|&&nb| nb != other && g.atoms[nb].symbol != "H")
+            .filter_map(|nb| local.get(nb).copied())
+            .collect::<Vec<_>>()
+    };
+    let mut out = Vec::new();
+    for b in &g.bonds {
+        let Some(ez) = b.stereo else { continue };
+        let (a, c) = (b.begin_idx, b.end_idx);
+        let (Some(&la), Some(&lc)) = (local.get(&a), local.get(&c)) else {
+            continue;
+        };
+        let na = ez_nbrs(a, c);
+        let nc = ez_nbrs(c, a);
+        if na.is_empty() || nc.is_empty() {
+            continue;
+        }
+        let cip_hi = |ns: &[usize]| *ns.iter().max_by_key(|&&x| cip[atoms[x]]).expect("nonempty");
+        out.push(BStereo {
+            a: la,
+            c: lc,
+            cip_hi_a: cip_hi(&na),
+            cip_hi_c: cip_hi(&nc),
+            na,
+            nc,
+            opposite_cip: ez == 'E',
+        });
+    }
+    out
+}
+
 /// 分子全体の正準番号付け。返り値は成分ごとに
 /// `canonical番号 (1 始まり) → 元の原子インデックス (0 始まり)` のベクタ。
 /// RDKit AuxInfo `/N:` と同じ形式 (成分順は connected_components 準拠)。
 pub fn canonical_numbering(g: &MoleculeGraph) -> Vec<Vec<usize>> {
     let tgroup = tautomer_group_members(g);
+    let cip = crate::stereo::cip_ranks(g);
     connected_components(g)
         .iter()
         .map(|atoms| {
             let natoms = build_natoms(g, atoms, &tgroup);
-            let numbering = number_component(&natoms); // local idx → 0-based canon
-                                                       // canon番号 → 元の原子 idx
+            let bs = build_bstereo(g, atoms, &cip);
+            let numbering = number_component(&natoms, &bs); // local idx → 0-based canon
+                                                            // canon番号 → 元の原子 idx
             let mut inv = vec![0usize; atoms.len()];
             for (li, &cn) in numbering.iter().enumerate() {
                 inv[cn] = atoms[li];
