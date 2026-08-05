@@ -290,6 +290,9 @@ fn is_achiral(g: &MoleculeGraph, comp: &Component, centers: &[(usize, char)]) ->
     let mut pi = vec![0usize; n + 1];
     let mut used = vec![false; n + 1];
     let mut budget = 200_000usize;
+    // 局所的な再帰ヘルパ。状態をまとめた構造体を切るより引数のままの方が
+    // 読みやすいので、引数個数の lint はここでは無効化する。
+    #[allow(clippy::too_many_arguments)]
     fn search(
         c: usize,
         n: usize,
