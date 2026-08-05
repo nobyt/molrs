@@ -198,6 +198,164 @@ fn tetra_raw_parity(
     Some(if (rs_bit ^ pp) == 1 { '-' } else { '+' })
 }
 
+/// 正準番号空間の色 (自己同型が保たなければならない原子の不変量) を
+/// 1-WL 精緻化で求める。返り値は 1-indexed (添字 0 は未使用)。
+fn refined_colors(g: &MoleculeGraph, comp: &Component) -> Vec<usize> {
+    let n = comp.inv.len();
+    // 初期色: 元素・電荷・固定 H 数・次数 (正準番号付けが使う不変量と同じ粒度)
+    let mut keys: Vec<String> = (0..=n)
+        .map(|c| {
+            if c == 0 {
+                return String::new();
+            }
+            let a = &g.atoms[comp.inv[c - 1]];
+            format!(
+                "{}|{}|{}|{}",
+                a.symbol,
+                a.formal_charge,
+                comp.fixed_h[c],
+                comp.adj[c].len()
+            )
+        })
+        .collect();
+    let mut color = assign_ids(&keys);
+    for _ in 0..n {
+        let next_keys: Vec<String> = (0..=n)
+            .map(|c| {
+                if c == 0 {
+                    return String::new();
+                }
+                let mut nb: Vec<usize> = comp.adj[c].iter().map(|&x| color[x]).collect();
+                nb.sort_unstable();
+                format!("{}|{nb:?}", color[c])
+            })
+            .collect();
+        let next = assign_ids(&next_keys);
+        if next == color {
+            break;
+        }
+        color = next;
+        keys = next_keys;
+    }
+    let _ = keys;
+    color
+}
+
+/// 文字列キー列 → 辞書順に基づく連番 ID 列。
+fn assign_ids(keys: &[String]) -> Vec<usize> {
+    let mut uniq: Vec<&String> = keys.iter().collect();
+    uniq.sort_unstable();
+    uniq.dedup();
+    keys.iter()
+        .map(|k| uniq.binary_search(&k).unwrap())
+        .collect()
+}
+
+/// 分子がアキラル (メソ体など、鏡像が自分自身と一致する) かどうか。
+///
+/// 実 InChI は構造とその鏡像を両方正準化し、結果が同一なら `/m`・`/s` を
+/// 出力しない (メソ酒石酸 `.../t1-,2+` に `/m` が付かないのはこのため)。
+/// 鏡像は全ての生パリティを反転したものなので、条件は「グラフの自己同型 π が
+/// 存在して、π で番号を付け替えた割り当てが全反転した割り当てと一致する」。
+///
+/// π で付け替えると、中心 c のパリティは隣接の正準昇順が π によって並べ替わる
+/// 分だけ反転する (`new(π(c)) = old(c) XOR σ_c`、σ_c はその置換のパリティ)。
+/// CIP ランクと R/S は自己同型で不変なのでこの項だけが効く。したがって
+/// 求める条件は全ての中心で `old(c) XOR σ_c == !old(π(c))`。
+///
+/// 探索は色クラス内のバックトラッキング。ノード数に上限を設け、超えた場合は
+/// 「アキラルと証明できなかった」= false を返す (安全側 — `/m` は出力される)。
+fn is_achiral(g: &MoleculeGraph, comp: &Component, centers: &[(usize, char)]) -> bool {
+    let n = comp.inv.len();
+    let color = refined_colors(g, comp);
+    // 中心の正準番号 → パリティ (0/1)
+    let mut parity: Vec<Option<usize>> = vec![None; n + 1];
+    for &(c, p) in centers {
+        parity[c] = Some(usize::from(p == '-'));
+    }
+    // 各中心の置換基正準番号 (H は仮想的に最大値)
+    let subs = |c: usize| -> Vec<usize> {
+        let mut v = comp.adj[c].clone();
+        let orig = comp.inv[c - 1];
+        let n_h = g.adjacency[orig]
+            .iter()
+            .filter(|&&x| g.atoms[x].symbol == "H")
+            .count();
+        if v.len() == 3 && n_h == 1 {
+            v.push(usize::MAX);
+        }
+        v
+    };
+
+    let mut pi = vec![0usize; n + 1];
+    let mut used = vec![false; n + 1];
+    let mut budget = 200_000usize;
+    fn search(
+        c: usize,
+        n: usize,
+        color: &[usize],
+        adj: &[Vec<usize>],
+        pi: &mut Vec<usize>,
+        used: &mut Vec<bool>,
+        budget: &mut usize,
+        check: &dyn Fn(&[usize]) -> bool,
+    ) -> bool {
+        if c > n {
+            return check(pi);
+        }
+        for cand in 1..=n {
+            if *budget == 0 {
+                return false;
+            }
+            *budget -= 1;
+            if used[cand] || color[cand] != color[c] {
+                continue;
+            }
+            // 既に割り当て済みの原子との隣接関係が保たれるか
+            if !(1..c).all(|k| adj[c].contains(&k) == adj[cand].contains(&pi[k])) {
+                continue;
+            }
+            pi[c] = cand;
+            used[cand] = true;
+            if search(c + 1, n, color, adj, pi, used, budget, check) {
+                return true;
+            }
+            used[cand] = false;
+        }
+        false
+    }
+
+    let check = |pi: &[usize]| -> bool {
+        for &(c, _) in centers {
+            let img = pi[c];
+            let (Some(pc), Some(pimg)) = (parity[c], parity[img]) else {
+                return false;
+            };
+            let s = subs(c);
+            let mut a = s.clone();
+            a.sort_unstable();
+            let mut b = s.clone();
+            b.sort_by_key(|&x| if x == usize::MAX { usize::MAX } else { pi[x] });
+            let sigma = perm_parity(&a, &b);
+            if (pc ^ sigma) != 1 - pimg {
+                return false;
+            }
+        }
+        true
+    };
+
+    search(
+        1,
+        n,
+        &color,
+        &comp.adj,
+        &mut pi,
+        &mut used,
+        &mut budget,
+        &check,
+    )
+}
+
 /// `/t`・`/m`・`/s` 層。返り値は (t本体, mありなら Some(m文字), sありなら Some(s文字))。
 /// 立体中心がなければ (空, None, None)。
 pub(crate) fn tetrahedral_layers(
@@ -217,7 +375,12 @@ pub(crate) fn tetrahedral_layers(
     centers.sort_unstable();
     // /m 正規化: 最初の中心の生パリティが '+' なら全反転して '-' に、m=1。
     let invert = centers[0].1 == '+';
-    let m = if invert { '1' } else { '0' };
+    // メソ体 (鏡像が自分自身と一致) では実 InChI は /m・/s を出さない。
+    let m = if is_achiral(g, comp, &centers) {
+        None
+    } else {
+        Some(if invert { '1' } else { '0' })
+    };
     let t = centers
         .iter()
         .map(|&(c, p)| {
@@ -234,7 +397,8 @@ pub(crate) fn tetrahedral_layers(
         })
         .collect::<Vec<_>>()
         .join(",");
-    (t, Some(m), Some('1'))
+    let s = m.map(|_| '1');
+    (t, m, s)
 }
 
 #[cfg(test)]
@@ -275,6 +439,28 @@ mod tests {
         assert_eq!(tms("F[C@H](Cl)Br"), "t1-/m0/s1");
         assert_eq!(tms("F[C@@H](Cl)Br"), "t1-/m1/s1");
         assert_eq!(tms("C[C@H](O)[C@@H](O)C"), "t3-,4-/m0/s1");
+    }
+
+    /// メソ体 (鏡像が自分自身と一致) は `/t` だけで `/m`・`/s` を出さない。
+    /// 対称に等価な 2 中心が逆パリティを持ち、両者を入れ替える自己同型が
+    /// 全パリティ反転を実現する場合。
+    #[test]
+    fn meso_compounds_omit_m_and_s() {
+        // メソ酒石酸
+        assert_eq!(tms("OC(=O)[C@@H](O)[C@@H](O)C(=O)O"), "t1-,2+");
+        // cis-シクロヘキサン-1,2-ジオール
+        assert_eq!(tms("O[C@@H]1CCCC[C@@H]1O"), "t5-,6+");
+        assert_eq!(tms("[C@@H](F)([C@H](F)Cl)Cl"), "t1-,2+");
+    }
+
+    /// 逆に、光学活性な (対称でない、あるいは同符号の) 分子では /m・/s が
+    /// 残ること — メソ判定が広すぎないことの回帰テスト。
+    #[test]
+    fn chiral_compounds_keep_m_and_s() {
+        // (R,R)/(S,S)-酒石酸は光学活性
+        assert_eq!(tms("OC(=O)[C@@H](O)[C@H](O)C(=O)O"), "t1-,2-/m0/s1");
+        assert_eq!(tms("O[C@@H]1CCCC[C@H]1O"), "t5-,6-/m1/s1");
+        assert_eq!(tms("C[C@H](N)C(=O)O"), "t2-/m0/s1");
     }
 
     #[test]
