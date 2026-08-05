@@ -502,6 +502,90 @@ fn seed_groups(
 /// カルバミン酸系 (O,O 酸対に対して N を除外する規則) 等、種の段階での
 /// 除外はそのままブリッジ探索にも伝播する (除外された N は種のどの
 /// マッチ済みメンバーからも自由辺 1 本では到達できないため)。
+/// 供与体 → 受容体の交互到達可能性 (原子 ID ベース、頂点分割なしの π 全体
+/// グラフ)。[`mobile_groups_exact`] と同じ厳密判定だが、群の検出には使わず
+/// 検出済みの群から**偽陽性を落とすフィルタ**として使う (I22)。
+///
+/// 厳密判定は「H が移動できる」ための必要十分条件だが、そもそも何を端点と
+/// 認めるか (元素・価数・電荷の条件) は実 InChI 固有の規則で、それを緩く
+/// 取ると群を作りすぎる。そこで端点の認定は従来どおり [`seed_groups`] /
+/// ブリッジ探索に任せ、その結果に対して「本当に交互パスが通るか」だけを
+/// この関数で検証する。
+/// スルホニル S やホスホリル P のように**二重結合を 2 本以上**持つ原子が
+/// あるため、1 原子 1 マッチの単純マッチングでは Kekule 構造を表現できない。
+/// 容量 (= その原子が持つ二重結合の本数) の分だけ原子を複製する標準的な
+/// 次数制約部分グラフ → マッチングの帰着で対応する。
+fn exact_reachability(g: &MoleculeGraph) -> Vec<Vec<usize>> {
+    let n = g.atoms.len();
+    let kekule = kekule_order_map(g);
+    let in_pi = |i: usize| g.atoms[i].symbol != "H" && has_search_slack(g, &kekule, i);
+    let bo = |u: usize, v: usize| kekule.get(&(u.min(v), u.max(v))).copied().unwrap_or(1.0);
+    let n_double = |i: usize| {
+        g.adjacency[i]
+            .iter()
+            .filter(|&&nb| g.atoms[nb].symbol != "H" && bo(i, nb) == 2.0)
+            .count()
+    };
+
+    // 原子 → その複製頂点 ID 群
+    let mut clones: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut owner: Vec<usize> = Vec::new();
+    for i in 0..n {
+        if !in_pi(i) {
+            continue;
+        }
+        for _ in 0..n_double(i).max(1) {
+            clones[i].push(owner.len());
+            owner.push(i);
+        }
+    }
+
+    let mut graph = blossom::MatchGraph::new(owner.len());
+    let mut matched: Vec<Option<usize>> = vec![None; owner.len()];
+    for b in &g.bonds {
+        let (u, v) = (b.begin_idx, b.end_idx);
+        if !in_pi(u) || !in_pi(v) {
+            continue;
+        }
+        for &cu in &clones[u] {
+            for &cv in &clones[v] {
+                graph.add_edge(cu, cv);
+            }
+        }
+        if bo(u, v) == 2.0 {
+            // 空いている複製どうしを 1 組だけ対応付ける
+            if let (Some(&cu), Some(&cv)) = (
+                clones[u].iter().find(|&&c| matched[c].is_none()),
+                clones[v].iter().find(|&&c| matched[c].is_none()),
+            ) {
+                matched[cu] = Some(cv);
+                matched[cv] = Some(cu);
+            }
+        }
+    }
+
+    (0..n)
+        .map(|d| {
+            if !in_pi(d) {
+                return Vec::new();
+            }
+            let mut out: Vec<usize> = Vec::new();
+            for &cd in &clones[d] {
+                if matched[cd].is_some() {
+                    continue;
+                }
+                for c in graph.alternating_reachable(&matched, cd) {
+                    let a = owner[c];
+                    if a != d && !out.contains(&a) {
+                        out.push(a);
+                    }
+                }
+            }
+            out
+        })
+        .collect()
+}
+
 pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     let n = g.atoms.len();
     let kekule = kekule_order_map(g);
@@ -814,31 +898,55 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             by_root.entry(uf.find(i)).or_default().push(i);
         }
     }
+    // I22: 検出済みの群を「本当に H が移動できるか」で検証し、交互パスが
+    // 通らないメンバーを落とす (偽陽性フィルタ)。頂点分割のない π 全体の
+    // グラフ上でブロッサム法により厳密に判定する — 縮環をまたぐ長い
+    // 再 Kekule 化の連鎖が実際には破綻するケース (例: `[H]Oc1c[nH]c2ccnc-2n1`
+    // の環外 OH) を、局所パターンだけを見る `seed_groups` では弾けない。
+    let reach = exact_reachability(g);
+    let exact_linked =
+        |a: usize, b: usize| -> bool { reach[a].contains(&b) || reach[b].contains(&a) };
     let mut groups: Vec<(Vec<usize>, u8)> = Vec::new();
-    for (_, mut grp) in by_root {
-        if grp.len() < 2 {
-            continue;
+    for (_, grp) in by_root {
+        // 群内を厳密到達可能性で再連結し、連結成分ごとに分ける
+        let mut sub = UnionFind::new(n);
+        for (i, &a) in grp.iter().enumerate() {
+            for &b in &grp[i + 1..] {
+                if exact_linked(a, b) {
+                    sub.union(a, b);
+                }
+            }
         }
-        grp.sort_unstable();
-        let total_h: usize = grp.iter().map(|&e| n_h_of(g, e)).sum();
-        let raw_neg = grp
-            .iter()
-            .filter(|&&e| g.atoms[e].formal_charge < 0)
-            .count();
-        // H も負電荷も一切ない群は完全に偽陽性なので除外する。
-        if total_h + raw_neg == 0 {
-            continue;
+        let mut parts: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for &a in &grp {
+            parts.entry(sub.find(a)).or_default().push(a);
         }
-        // 可動 H 数: 電荷分離 (zwitterion) で固定された負電荷 (ニトロ・
-        // N-オキシドの O-) は可動プロトンとして数えない (実 InChI 準拠、
-        // is_locked_zwitterion_neg)。可動数が 0 になっても群自体は残す —
-        // メンバーは正準番号付けで等価化される (ニトロの 2 つの O は
-        // 対称) が、h 層には出力されない (可動 H がないため)。
-        let unlocked_neg = grp
-            .iter()
-            .filter(|&&e| g.atoms[e].formal_charge < 0 && !is_locked_zwitterion_neg(g, e))
-            .count();
-        groups.push((grp, (total_h + unlocked_neg) as u8));
+        for (_, mut grp) in parts {
+            if grp.len() < 2 {
+                continue;
+            }
+            grp.sort_unstable();
+            let total_h: usize = grp.iter().map(|&e| n_h_of(g, e)).sum();
+            let raw_neg = grp
+                .iter()
+                .filter(|&&e| g.atoms[e].formal_charge < 0)
+                .count();
+            // H も負電荷も一切ない群は完全に偽陽性なので除外する。
+            if total_h + raw_neg == 0 {
+                continue;
+            }
+            // 可動 H 数: 電荷分離 (zwitterion) で固定された負電荷 (ニトロ・
+            // N-オキシドの O-) は可動プロトンとして数えない (実 InChI 準拠、
+            // is_locked_zwitterion_neg)。可動数が 0 になっても群自体は残す —
+            // メンバーは正準番号付けで等価化される (ニトロの 2 つの O は
+            // 対称) が、h 層には出力されない (可動 H がないため)。
+            let unlocked_neg = grp
+                .iter()
+                .filter(|&&e| g.atoms[e].formal_charge < 0 && !is_locked_zwitterion_neg(g, e))
+                .count();
+            groups.push((grp, (total_h + unlocked_neg) as u8));
+        }
     }
     groups.sort_by_key(|(m, _)| m[0]);
     groups
@@ -1425,6 +1533,36 @@ mod tests {
         let groups = mobile_groups(&g);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].0.len(), 3);
+    }
+
+    /// I22: 検出済みの群を「本当に交互パスが通るか」で厳密検証し、通らない
+    /// メンバーを落とす (exact_reachability)。縮環をまたぐ長い再 Kekule 化の
+    /// 連鎖が実際には破綻するケースを、局所パターンだけの seed_groups では
+    /// 弾けなかった。
+    #[test]
+    fn mobile_h_exact_filter_drops_unreachable_endpoints() {
+        // 6-5 縮環アザインドール型 + 環外 OH。局所的には OH-C=N の 1,3 パターンに
+        // 見えるが、必要な再 Kekule 化の連鎖が N-H の価数で破綻するため、実 InChI は
+        // 可動 H 群を作らない (OH も N-H も固定)。
+        let g = build_molecule_graph("[H]Oc1c[nH]c2ccnc-2n1").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+        let g = build_molecule_graph("[H]Sc1ncc2ccc[nH]c1-2").unwrap();
+        assert!(mobile_groups(&g).is_empty());
+    }
+
+    /// I22 の厳密検証は、二重結合を 2 本持つスルホニル S を容量 2 の頂点複製で
+    /// 扱う。単純マッチング (1 原子 1 マッチ) だと S=O を 1 本しか表現できず、
+    /// スルホン酸の 3 つの O が 1 群にならなくなる回帰があった。
+    #[test]
+    fn mobile_h_sulfonyl_capacity_two_keeps_all_oxygens() {
+        let g = build_molecule_graph("CS(=O)(=O)O").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3, "3 つの O が 1 群");
+        let g = build_molecule_graph("C=CS(=O)(=O)N").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 3, "2 つの O と N が 1 群");
     }
 
     #[test]
