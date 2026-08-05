@@ -44,25 +44,20 @@ fn load() -> Vec<Record> {
         .collect()
 }
 
-/// 128 原子を超える分子は `build_molecule_graph` の環認識 (`rings.rs` の
-/// `assert!`) でパニックするため (I29 で判明した既知のバグ)、パニックを
-/// 捕まえて「不一致」として数える。SMILES パーサが弾く分 (超原子価ハロゲン)
-/// も同様に不一致扱い。
+/// 生成できなければ None (128 原子超の `Unsupported`、超原子価ハロゲンの
+/// `InvalidSmiles` など) で、いずれも「不一致」として数える。
+///
+/// I29 の時点では 128 原子超が `rings.rs` の `assert!` でパニックしたため
+/// ここで `catch_unwind` していたが、I31 で `ChemError::Unsupported` を返す
+/// ようになったので不要になった。
 fn try_inchi(smiles: &str) -> Option<String> {
-    let s = smiles.to_string();
-    std::panic::catch_unwind(|| {
-        let g = build_molecule_graph(&s).ok()?;
-        molrs::inchi::to_inchi(&g).ok()
-    })
-    .ok()
-    .flatten()
+    let g = build_molecule_graph(smiles).ok()?;
+    molrs::inchi::to_inchi(&g).ok()
 }
 
 #[test]
 fn pubchem_full_inchi() {
     let recs = load();
-    let prev = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {})); // 128 原子超のバックトレースを抑止
     let mut ok = 0usize;
     let mut n = 0usize;
     for r in &recs {
@@ -74,10 +69,10 @@ fn pubchem_full_inchi() {
             ok += 1;
         }
     }
-    std::panic::set_hook(prev);
     let acc = ok as f64 / n.max(1) as f64;
     println!("pubchem full InChI: {ok}/{n} exact ({:.2}%)", acc * 100.0);
-    // I29 94.66% → I30 96.97% (未定義四面体中心 `?` + 第四級中心のパリティ)。
+    // I29 94.66% → I30 96.97% (未定義四面体中心 `?` + 第四級中心のパリティ)
+    //            → I31 97.05% (成分単位の電荷中性化)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.969, "pubchem InChI accuracy {acc:.4} < 0.969");
+    assert!(acc >= 0.970, "pubchem InChI accuracy {acc:.4} < 0.970");
 }

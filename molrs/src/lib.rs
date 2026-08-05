@@ -28,12 +28,16 @@ pub mod substructure;
 pub enum ChemError {
     /// 不正な SMILES (パースエラー・原子価超過など)
     InvalidSmiles(String),
+    /// 構造自体は正しいが実装の制限で扱えない (環認識の 128 原子上限など)。
+    /// ライブラリがパニックする代わりにこれを返す (I31)。
+    Unsupported(String),
 }
 
 impl std::fmt::Display for ChemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ChemError::InvalidSmiles(s) => write!(f, "Invalid SMILES: {s}"),
+            ChemError::Unsupported(s) => write!(f, "unsupported structure: {s}"),
         }
     }
 }

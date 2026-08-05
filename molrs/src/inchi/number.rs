@@ -95,10 +95,34 @@ fn n_h_of(g: &MoleculeGraph, i: usize) -> usize {
 /// 3 つの O を 1 群とし可動 H = 1 だが、その 1 は O-H 由来で O- 由来ではない)
 /// が、可動 H 数には数えない。
 fn is_locked_zwitterion_neg(g: &MoleculeGraph, atom: usize) -> bool {
-    g.atoms[atom].formal_charge < 0
-        && g.adjacency[atom]
-            .iter()
-            .any(|&nb| g.atoms[nb].symbol != "H" && g.atoms[nb].formal_charge > 0)
+    if g.atoms[atom].formal_charge >= 0 {
+        return false;
+    }
+    // 同じ成分のどこかに陽電荷があれば、この負電荷は「対になって固定されて
+    // いる」ので可動プロトンとして数えない (I31)。
+    //
+    // 電荷正規化 ([`super::normalize::neutralize`]) は成分の**正味電荷**を 0 に
+    // するので、正規化後も残る負電荷は必ず成分内の陽電荷と釣り合っている。
+    // ニトロ・N-オキシドのような隣接した電荷分離だけでなく、アセチルカル
+    // ニチン `CC(=O)OC(CC(=O)[O-])C[N+](C)(C)C` のように四級 N+ が遠くに
+    // ある分子内塩も対象 — 実 InChI はこのカルボキシラートに可動 H 群
+    // `(H,12,13)` を作らない (H が乗っていないので当然)。隣接だけを見て
+    // いると遠い対イオンを見逃していた。
+    let mut seen = vec![false; g.atoms.len()];
+    let mut stack = vec![atom];
+    seen[atom] = true;
+    while let Some(a) = stack.pop() {
+        if g.atoms[a].symbol != "H" && g.atoms[a].formal_charge > 0 {
+            return true;
+        }
+        for &nb in &g.adjacency[a] {
+            if !seen[nb] {
+                seen[nb] = true;
+                stack.push(nb);
+            }
+        }
+    }
+    false
 }
 
 /// Kekule 化済みの結合次数 (芳香族結合も 1/2 の実値。`g.bond_orders` は

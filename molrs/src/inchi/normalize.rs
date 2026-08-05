@@ -23,6 +23,31 @@ fn is_deprotonatable(sym: &str) -> bool {
     matches!(sym, "N" | "O" | "S" | "Se" | "Te")
 }
 
+/// 重原子の連結成分 id (重原子 idx → 成分 id)。電荷の中性化は成分ごとに
+/// 行うため ([`neutralize`])、`inchi::number::connected_components` を待たずに
+/// ここで求める必要がある。
+fn heavy_components(g: &MoleculeGraph, n_heavy: usize) -> Vec<usize> {
+    let mut comp = vec![usize::MAX; n_heavy];
+    let mut next = 0usize;
+    for start in 0..n_heavy {
+        if comp[start] != usize::MAX {
+            continue;
+        }
+        let mut stack = vec![start];
+        comp[start] = next;
+        while let Some(a) = stack.pop() {
+            for &nb in &g.adjacency[a] {
+                if nb < n_heavy && comp[nb] == usize::MAX {
+                    comp[nb] = next;
+                    stack.push(nb);
+                }
+            }
+        }
+        next += 1;
+    }
+    comp
+}
+
 /// 中性化したグラフと (q, p)。q = 残余電荷合計、p = 除去 - 付加 プロトン数。
 pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
     let n_heavy = g.atoms.iter().filter(|a| a.symbol != "H").count();
@@ -44,7 +69,6 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
     let mut final_h = vec![0i32; n_heavy];
     let mut n_add = 0i32;
     let mut n_remove = 0i32;
-    let mut q = 0i32;
 
     // 隣接に逆符号の電荷を持つ原子 (イリド/N-オキシド/ニトロ/アジド等の
     // 電荷分離) はプロトン化しない — InChI は共有結合の中性形で扱う。
@@ -55,36 +79,106 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
         })
     };
 
+    // 成分ごとのプロトン移動予算 (I31)。
+    //
+    // InChI が中性化するのは「各原子」ではなく「**各成分の正味電荷**」。
+    // 分子内塩 (アセチルカルニチン `CC(=O)OC(CC(=O)[O-])C[N+](C)(C)C` の
+    // ように四級 N+ とカルボキシラートが同じ成分にある) は正味 0 なので
+    // **プロトンを一切動かさない** — 実 InChI は `C9H17NO4` (H 17 個) で
+    // `/q` も `/p` も付かない。原子ごとに中性化すると O- をプロトン化して
+    // H 18 個になり、四級 N+ が中和できず `/q+1/p-1` が付いてしまう。
+    //
+    // 正味 +1 の側 (`CC(=O)OC(CC(=O)O)C[N+](C)(C)C`) は COOH から 1 個
+    // 外して正味 0 にし `/p+1`。基準状態はどちらも同じ双性イオンになる。
+    //
+    // 酢酸ナトリウム `[Na+].[O-]C(=O)C` のような塩は成分が分かれているので
+    // 従来どおり: 酢酸イオン成分は正味 -1 → プロトン付加で `/p-1`、Na 成分は
+    // 正味 +1 で外せる H がなく `/q+1`。
+    let comp_of = heavy_components(g, n_heavy);
+    let n_comps = comp_of.iter().copied().max().map_or(0, |m| m + 1);
+    let mut budget = vec![0i32; n_comps];
+    for i in 0..n_heavy {
+        budget[comp_of[i]] += g.atoms[i].formal_charge as i32;
+    }
+
     for i in 0..n_heavy {
         let a = &g.atoms[i];
         let h = cur_h(i);
         let ch = a.formal_charge as i32;
+        let b = &mut budget[comp_of[i]];
         if ch != 0 && has_opposite_charged_neighbor(i) {
-            // 電荷分離 (ネット中性の zwitterion) → 触らない
+            // 電荷分離 (ニトロ・N-オキシド等) → 触らない
             final_h[i] = h;
             new_charge[i] = a.formal_charge;
-            q += ch;
-        } else if ch < 0 && is_protonatable(&a.symbol) {
-            // 負電荷 → プロトン付加で中性化
-            let add = -ch;
+        } else if ch < 0 && is_protonatable(&a.symbol) && *b < 0 {
+            // 負電荷 → プロトン付加で中性化 (成分の正味電荷を超えない範囲で)
+            let add = (-ch).min(-*b);
             n_add += add;
+            *b += add;
             final_h[i] = h + add;
-            new_charge[i] = 0;
-        } else if ch > 0 && is_deprotonatable(&a.symbol) && h > 0 {
-            // プロトン付き陽イオン → 除去で中性化 (除去可能な H まで)
-            let rem = ch.min(h);
+            new_charge[i] = (ch + add) as i8;
+        } else if ch > 0 && is_deprotonatable(&a.symbol) && h > 0 && *b > 0 {
+            // プロトン付き陽イオン → 除去で中性化
+            let rem = ch.min(h).min(*b);
             n_remove += rem;
+            *b -= rem;
             final_h[i] = h - rem;
-            let residual = ch - rem;
-            new_charge[i] = residual as i8;
-            q += residual;
+            new_charge[i] = (ch - rem) as i8;
         } else {
-            // 中性化不能 (四級 N・金属など)
+            // 中性化不能 (四級 N・金属など)、または成分が既に正味中性
             final_h[i] = h;
             new_charge[i] = a.formal_charge;
-            q += ch;
         }
     }
+
+    // 第 2 パス (I31): 成分にまだ正味の陽電荷が残っていて、外せる**陽イオンの**
+    // H が無い場合は、**中性の酸点** (カルボン酸等の O-H) からプロトンを外して
+    // 釣り合わせる。
+    //
+    // カルニチン `C[N+](C)(C)CC(CC(=O)O)O` がこれで、四級 N+ は脱プロトン
+    // できないが実 InChI は COOH から 1 個外した双性イオンを基準にして
+    // `C7H15NO3/…/p+1` を出す。外さないと `/q+1` になってしまう。
+    //
+    // 酸性度の高い順に外す: カルボン酸型 (隣の C が =O/=S を持つ O-H) →
+    // その他の O-H → S-H。同種なら番号の小さい方から。
+    let is_acyl_oxygen = |i: usize| -> bool {
+        g.adjacency[i].iter().any(|&c| {
+            g.atoms[c].symbol == "C"
+                && g.bonds.iter().enumerate().any(|(bi, b)| {
+                    (b.begin_idx == c || b.end_idx == c)
+                        && g.kekule_bond_orders[bi] == 2.0
+                        && matches!(
+                            g.atoms[if b.begin_idx == c {
+                                b.end_idx
+                            } else {
+                                b.begin_idx
+                            }]
+                            .symbol
+                            .as_str(),
+                            "O" | "S"
+                        )
+                })
+        })
+    };
+    for (c, left) in budget.iter_mut().enumerate().take(n_comps) {
+        while *left > 0 {
+            let pick = (0..n_heavy)
+                .filter(|&i| {
+                    comp_of[i] == c
+                        && new_charge[i] == 0
+                        && final_h[i] > 0
+                        && matches!(g.atoms[i].symbol.as_str(), "O" | "S")
+                })
+                .min_by_key(|&i| (!is_acyl_oxygen(i), g.atoms[i].symbol != "O", i));
+            let Some(i) = pick else { break };
+            final_h[i] -= 1;
+            new_charge[i] = -1;
+            n_remove += 1;
+            *left -= 1;
+        }
+    }
+    // q は最終的な電荷の総和 (2 パス目で変わるのでここで数え直す)
+    let q: i32 = new_charge.iter().map(|&c| c as i32).sum();
 
     let p = n_remove - n_add;
     if n_add == 0 && n_remove == 0 && q == g.atoms.iter().map(|a| a.formal_charge as i32).sum() {
