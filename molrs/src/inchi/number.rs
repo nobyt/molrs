@@ -235,6 +235,105 @@ fn has_search_slack(
             && (n_h_of(g, atom) >= 1 || g.atoms[atom].formal_charge < 0))
 }
 
+/// 環の全メンバーが探索スラックを持つ (= 環全体で結合を組み替えられる) か。
+///
+/// 実 InChI の `nGet15TautIn6MembAltRing` が要求する「交互環」に相当する判定。
+/// 「環内の二重結合をちょうど 3 本数える」のは Kekule 化の任意性に左右される
+/// (縮環では共有辺の二重結合をどちらの環が「借りる」かで変わる) ため、
+/// 各メンバーが [`has_search_slack`] を持つかで判定する — ナフタレンのように
+/// 環内二重結合が 2 本しかない側の環でも、全原子は隣の環との共有辺で
+/// 二重結合を持つので交互環と判定される。可動 H 群の端点そのもの
+/// (キノロンの環内 N-H など、二重結合を持たない代わりに H を持つ) も
+/// スラックありなので環を塞がない。
+///
+/// 逆にクマリンのピラノン環はラクトンの O が二重結合も H も持たない
+/// (孤立電子対で芳香族性に寄与しているだけ) ためここで弾かれる。
+fn is_alternating_ring(
+    g: &MoleculeGraph,
+    kekule: &std::collections::HashMap<(usize, usize), f64>,
+    ring: &[usize],
+) -> bool {
+    ring.iter().all(|&a| has_search_slack(g, kekule, a))
+}
+
+/// 2 つの端点 `a`, `b` が実 InChI の認める互変異性シフト位置関係にあるか。
+///
+/// 実 InChI (`ichitaut.c`) が標準で検出するのは次の 2 種類だけで、
+/// 任意長の共役経路を互変異性とはみなさない:
+///
+/// - **1,3-シフト**: `a` と `b` が共通の隣接原子 (中心) を持つ。
+///   単一中心の星型パターンそのもので、[`seed_groups`] が拾う範囲と重なる。
+/// - **1,5-シフト**: `a-x-y-z-b` の 4 結合経路で、中間の 3 原子 `x,y,z` が
+///   同一の**交互環** ([`is_alternating_ring`]) に載っているとき。
+///   4-ヒドロキシピリジンの環外 O ↔ 環内 N、イサチンのケト O ↔ アミド N が
+///   これ (前者は 6 員環、後者は縮環 5 員環を経由する)。
+///
+/// ブロッサム法の交互到達判定 ([`mobile_groups`] のブリッジ探索) は
+/// 「再 Kekule 化が成立するか」という**必要条件**しか見ないため、実 InChI が
+/// 互変異性とみなさない長距離・偶数長のシフトまで拾ってしまう。例:
+///
+/// - `O=Nc1ccc[nH]1` のニトロソ O ↔ ピロール N-H は 1,4 (5 員環の奇閉路を
+///   ブロッサム収縮すると到達できてしまう)
+/// - 4-ヒドロキシクマリンの環外 OH ↔ ケト O は 1,5 だが、経路の 3 原子が
+///   載る環がラクトン O のせいで交互環でない
+///
+/// 距離だけでは分離できない (同距離で正反対の正解を持つ分子対が実在する)
+/// ため、交互環という環の条件と組み合わせるのが要点。
+fn taut_shift_ok(
+    g: &MoleculeGraph,
+    kekule: &std::collections::HashMap<(usize, usize), f64>,
+    a: usize,
+    b: usize,
+) -> bool {
+    let heavy = |i: usize| g.atoms[i].symbol != "H";
+    // 1,2: 直接隣接 (ピラゾール/トリアゾール環の N-N など)。実 InChI も
+    // インダゾールの 1H/2H を 1 群にする。
+    if g.adjacency[a].contains(&b) {
+        return true;
+    }
+    // 1,3: 共通の中心原子を持つ
+    if g.adjacency[a]
+        .iter()
+        .any(|&c| heavy(c) && c != b && g.adjacency[b].contains(&c))
+    {
+        return true;
+    }
+    // 1,5: 中間 3 原子が同一の交互環に載る
+    let alt: Vec<&Vec<usize>> = g
+        .ring_atom_sets
+        .iter()
+        .filter(|r| is_alternating_ring(g, kekule, r))
+        .collect();
+    if alt.is_empty() {
+        return false;
+    }
+    for &x in &g.adjacency[a] {
+        if !heavy(x) || x == b {
+            continue;
+        }
+        for &y in &g.adjacency[x] {
+            if !heavy(y) || y == a || y == b {
+                continue;
+            }
+            for &z in &g.adjacency[y] {
+                if !heavy(z) || z == a || z == x || z == b {
+                    continue;
+                }
+                if !g.adjacency[z].contains(&b) {
+                    continue;
+                }
+                if alt
+                    .iter()
+                    .any(|r| r.contains(&x) && r.contains(&y) && r.contains(&z))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// 容量ゼロの原子 (橋頭ヘテロ原子など、[`has_search_slack`] が false) を
 /// 1 つでも含む SSSR 環に属する原子を全て「無効化」した集合を返す
 /// (I19 §3.4)。
@@ -1019,7 +1118,9 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
                 // いるので、union-find もヘテロ原子 (最終的に群メンバーに
                 // なりうる原子) への到達だけを併合対象にすれば十分 — 経由
                 // 点の炭素まで union すると分割の効果が最終段で失われる。
-                if is_hetero(g.atoms[reached].symbol.as_str()) {
+                if is_hetero(g.atoms[reached].symbol.as_str())
+                    && taut_shift_ok(g, &kekule, root, reached)
+                {
                     uf.union(root, reached);
                     members.insert(reached);
                 }
