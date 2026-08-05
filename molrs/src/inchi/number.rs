@@ -169,7 +169,7 @@ fn is_acceptor_agg(
 /// 無効化していた (環の Kekule 構造が橋頭原子で固定されており、隣接原子の
 /// 実在二重結合が問題の結合位置まで移動できるとは限らないため)。これは
 /// 「再 Kekule 化の連鎖が本当に成立するか」を局所情報で近似する回避策で、
-/// I22 の厳密な交互パス検証 ([`exact_reachability`]) がその判定を正確に
+/// I22 の厳密な検証 ([`hub_allowed_endpoints`]) がその判定を正確に
 /// 行えるようになったため撤去した。撤去により、橋頭 N を持つ縮環
 /// (`Oc1ccn2ccnc2n1` 型) で本来より小さい群しか作れていなかった 16 件が
 /// 正しくなる (99.37% → 99.58%)。
@@ -501,88 +501,226 @@ fn seed_groups(
 /// カルバミン酸系 (O,O 酸対に対して N を除外する規則) 等、種の段階での
 /// 除外はそのままブリッジ探索にも伝播する (除外された N は種のどの
 /// マッチ済みメンバーからも自由辺 1 本では到達できないため)。
-/// 供与体 → 受容体の交互到達可能性 (原子 ID ベース、頂点分割なしの π 全体
-/// グラフ)。[`mobile_groups_exact`] と同じ厳密判定だが、群の検出には使わず
-/// 検出済みの群から**偽陽性を落とすフィルタ**として使う (I22)。
+/// 検出済みの候補群から**偽陽性の端点を落とすフィルタ** (I22 → I24)。
+/// 実 InChI (`ichi_bns.c`) と同じく、各 t-group に**仮想のハブ頂点**を置いた
+/// マッチンググラフ上で「その端点が可動 H を保持できるか」を厳密に判定する。
 ///
-/// 厳密判定は「H が移動できる」ための必要十分条件だが、そもそも何を端点と
-/// 認めるか (元素・価数・電荷の条件) は実 InChI 固有の規則で、それを緩く
-/// 取ると群を作りすぎる。そこで端点の認定は従来どおり [`seed_groups`] /
-/// ブリッジ探索に任せ、その結果に対して「本当に交互パスが通るか」だけを
-/// この関数で検証する。
+/// 何を端点と認めるか (元素・価数・電荷の条件) は実 InChI 固有の規則で、
+/// それを緩く取ると群を作りすぎる。そこで端点の認定は従来どおり
+/// [`seed_groups`] / ブリッジ探索に任せ、その結果に対して「本当にその位置に
+/// H を置いた Kekule 構造が成立するか」だけをこの関数で検証する。
+///
+/// # グラフの作り
+///
 /// スルホニル S やホスホリル P のように**二重結合を 2 本以上**持つ原子が
 /// あるため、1 原子 1 マッチの単純マッチングでは Kekule 構造を表現できない。
-/// 容量 (= その原子が持つ二重結合の本数) の分だけ原子を複製する標準的な
-/// 次数制約部分グラフ → マッチングの帰着で対応する。
-fn exact_reachability(g: &MoleculeGraph) -> Vec<Vec<usize>> {
+/// 容量の分だけ原子を複製する標準的な次数制約部分グラフ → マッチングの帰着で
+/// 対応する。容量は「実在の二重結合の本数 + その原子が現に持つ可動 H 数」で、
+/// 後者が実 InChI の「端点はハブ経由で `MAX_AT_FLOW` が +1 される」に当たる。
+///
+/// 各候補群には可動 H 数 `k` だけのハブ頂点を置き、群の全端点の全複製と結ぶ。
+/// ハブは**群ごとに別々**に作る (1 個の大域ハブにすると群をまたいだ H 移動を
+/// 許してしまう)。どの候補群にも属さない供与体 (非互変異性の N-H など) には
+/// 自分だけに繋がる専用ハブを与え、その H が動かないよう固定する。
+/// この構成で初期マッチング (二重結合 + 「現に H を持つ端点 ↔ ハブ」) は
+/// **完全マッチング**になり、「端点 a が H を持てる」⟺「辺 (a, ハブ) を含む
+/// 最大マッチングが存在する」⟺「`G − a − hub` の最大マッチングが 1 本だけ
+/// 小さい」で判定できる。
+///
+/// # なぜ単一の交互パス判定 (I22) では足りないか
+///
+/// I22 は「供与体 d を根とする M-交互パスで受容体 a に到達できるか」だけを
+/// 見ていた。これは **H が 1 個だけ動く**場合には厳密に正しいが、ポリアザ
+/// 縮環 (`[H]Oc1cc2c[nH]nc2nn1` 等) では**2 個の可動 H が別々の群で同時に
+/// 動く**ことで初めて互変異性が成立する。このとき対称差は 2 本の独立した
+/// 交互パスに分かれ、単一パス判定では永久に繋がらない。ハブを置くと 2 本が
+/// ハブを経由して 1 本の交互閉路に繋がり、正しく判定できる。
+/// # 判定基準は「H 数が変わりうること」
+///
+/// 端点が t-group のメンバーである条件は、そこに載る H の数が**現状と違う値も
+/// 取れる**こと。すなわち今より 1 個少ない配置か、1 個多い配置のどちらかが
+/// 妥当な Kekule 構造として成立すること。「受け取れるか」だけを見ると元々 H を
+/// 持つ端点が自明に真になり、固定 O-H が誤って群に取り込まれる
+/// (`[H]Oc1nc[nH]c2ccnc1-2` 型の 6-5 縮環)。逆に「手放せるか」だけを見ると、
+/// 容量の都合で H を手放せない端点 (アミジン `CC(=N)N` の =NH は、相方の NH2 が
+/// 既に容量一杯なので必ず H を 1 個持つ) を落としてしまう — この =NH は
+/// 「H を 2 個持つ」側へは動けるので可動である。
+fn hub_allowed_endpoints(g: &MoleculeGraph, cands: &[Vec<usize>]) -> Vec<Vec<bool>> {
     let n = g.atoms.len();
     let kekule = kekule_order_map(g);
     let in_pi = |i: usize| g.atoms[i].symbol != "H" && has_search_slack(g, &kekule, i);
     let bo = |u: usize, v: usize| kekule.get(&(u.min(v), u.max(v))).copied().unwrap_or(1.0);
+    // 探索グラフに載る隣接原子との二重結合だけを数える (載らない相手との
+    // 結合には辺が張られないので、複製を用意しても永久にマッチできない)。
     let n_double = |i: usize| {
         g.adjacency[i]
             .iter()
-            .filter(|&&nb| g.atoms[nb].symbol != "H" && bo(i, nb) == 2.0)
+            .filter(|&&nb| in_pi(nb) && bo(i, nb) == 2.0)
             .count()
     };
+    // その原子が現に保持している可動 H 相当の数 (H + 負電荷)。
+    let donor_h = |i: usize| -> usize {
+        if is_hetero(g.atoms[i].symbol.as_str()) {
+            n_h_of(g, i) + usize::from(g.atoms[i].formal_charge < 0)
+        } else {
+            0
+        }
+    };
 
-    // 原子 → その複製頂点 ID 群
+    // --- 頂点の割り当て (原子の複製 → 群ハブ → 専用ハブ) ---
+    let mut n_vert = 0usize;
+    let mut take = |k: usize| -> Vec<usize> {
+        let v: Vec<usize> = (n_vert..n_vert + k).collect();
+        n_vert += k;
+        v
+    };
     let mut clones: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut owner: Vec<usize> = Vec::new();
-    for (i, slot) in clones.iter_mut().enumerate().take(n) {
-        if !in_pi(i) {
-            continue;
-        }
-        for _ in 0..n_double(i).max(1) {
-            slot.push(owner.len());
-            owner.push(i);
+    for (i, slot) in clones.iter_mut().enumerate() {
+        if in_pi(i) {
+            // 容量 0 (三重結合しか持たないニトリル炭素など) でも 1 頂点は置き、
+            // 経路の中継点として使えるようにする。
+            *slot = take((n_double(i) + donor_h(i)).max(1));
         }
     }
-
-    let mut graph = blossom::MatchGraph::new(owner.len());
-    let mut matched: Vec<Option<usize>> = vec![None; owner.len()];
-    for b in &g.bonds {
-        let (u, v) = (b.begin_idx, b.end_idx);
-        if !in_pi(u) || !in_pi(v) {
-            continue;
-        }
-        for &cu in &clones[u] {
-            for &cv in &clones[v] {
-                graph.add_edge(cu, cv);
-            }
-        }
-        if bo(u, v) == 2.0 {
-            // 空いている複製どうしを 1 組だけ対応付ける
-            if let (Some(&cu), Some(&cv)) = (
-                clones[u].iter().find(|&&c| matched[c].is_none()),
-                clones[v].iter().find(|&&c| matched[c].is_none()),
-            ) {
-                matched[cu] = Some(cv);
-                matched[cv] = Some(cu);
-            }
+    let mut group_of: Vec<Option<usize>> = vec![None; n];
+    for (gi, grp) in cands.iter().enumerate() {
+        for &a in grp {
+            group_of[a] = Some(gi);
         }
     }
+    let hubs: Vec<Vec<usize>> = cands
+        .iter()
+        .map(|grp| take(grp.iter().filter(|&&a| in_pi(a)).map(|&a| donor_h(a)).sum()))
+        .collect();
+    let mut private_hubs: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, slot) in private_hubs.iter_mut().enumerate() {
+        if in_pi(i) && group_of[i].is_none() {
+            *slot = take(donor_h(i));
+        }
+    }
+    let n_vert = n_vert;
 
-    (0..n)
-        .map(|d| {
-            if !in_pi(d) {
-                return Vec::new();
+    // --- グラフ構築 ---
+    // `limit` を渡すと、その原子だけ辺を張る複製を 1 個減らす:
+    // - `Fewer`: ハブに繋ぐ複製を 1 個減らす → 保持できる可動 H が今より 1 個
+    //   少ない構造しか作れないグラフ
+    // - `More`: 結合に繋ぐ複製を 1 個減らす → 二重結合が今より 1 本少ない
+    //   = 可動 H が今より 1 個多い構造しか作れないグラフ
+    //
+    // 原子の複製どうしは (ハブ辺を除いて) 隣接関係が同一なので、「先頭/末尾の
+    // 何個を繋ぐか」で一般性を失わずに上限を課せる。二重結合は先頭の複製から
+    // 埋めるので、結合側は先頭・ハブ側は末尾を使う。初期マッチングは
+    // 「実在の二重結合」と「現に H を持つ端点 ↔ ハブ」からなり、`limit` が
+    // None なら完全マッチングになる。
+    let build = |limit: Option<(usize, Shift)>| -> (blossom::MatchGraph, Vec<Option<usize>>) {
+        let bond_clones = |i: usize| -> &[usize] {
+            match limit {
+                Some((a, Shift::More)) if a == i => &clones[i][..n_double(i) - 1],
+                _ => &clones[i],
             }
-            let mut out: Vec<usize> = Vec::new();
-            for &cd in &clones[d] {
-                if matched[cd].is_some() {
-                    continue;
+        };
+        let hub_clones = |i: usize| -> &[usize] {
+            match limit {
+                Some((a, Shift::Fewer)) if a == i => {
+                    &clones[i][clones[i].len() - (donor_h(i) - 1)..]
                 }
-                for c in graph.alternating_reachable(&matched, cd) {
-                    let a = owner[c];
-                    if a != d && !out.contains(&a) {
-                        out.push(a);
+                _ => &clones[i],
+            }
+        };
+        let mut graph = blossom::MatchGraph::new(n_vert);
+        let mut matched: Vec<Option<usize>> = vec![None; n_vert];
+        for b in &g.bonds {
+            let (u, v) = (b.begin_idx, b.end_idx);
+            if !in_pi(u) || !in_pi(v) {
+                continue;
+            }
+            for &cu in bond_clones(u) {
+                for &cv in bond_clones(v) {
+                    graph.add_edge(cu, cv);
+                }
+            }
+            if bo(u, v) == 2.0 {
+                // 空いている複製どうしを 1 組だけ対応付ける
+                let cu = bond_clones(u)
+                    .iter()
+                    .copied()
+                    .find(|&c| matched[c].is_none());
+                let cv = bond_clones(v)
+                    .iter()
+                    .copied()
+                    .find(|&c| matched[c].is_none());
+                if let (Some(cu), Some(cv)) = (cu, cv) {
+                    matched[cu] = Some(cv);
+                    matched[cv] = Some(cu);
+                }
+            }
+        }
+        let mut connect = |members: &[usize], hub: &[usize]| {
+            let mut free = hub.iter().copied();
+            for &a in members {
+                let ports = hub_clones(a);
+                for &ca in ports {
+                    for &h in hub {
+                        graph.add_edge(ca, h);
                     }
                 }
+                for _ in 0..donor_h(a).min(ports.len()) {
+                    let (Some(h), Some(ca)) = (
+                        free.next(),
+                        ports.iter().copied().find(|&c| matched[c].is_none()),
+                    ) else {
+                        continue;
+                    };
+                    matched[ca] = Some(h);
+                    matched[h] = Some(ca);
+                }
             }
-            out
+        };
+        for (gi, grp) in cands.iter().enumerate() {
+            connect(grp, &hubs[gi]);
+        }
+        for (i, hub) in private_hubs.iter().enumerate() {
+            if !hub.is_empty() {
+                connect(&[i], hub);
+            }
+        }
+        (graph, matched)
+    };
+
+    let no_skip = vec![false; n_vert];
+    let mu = {
+        let (graph, matched) = build(None);
+        graph.max_matching(&mut matched.clone(), &no_skip)
+    };
+    // 制限付きグラフでも同じサイズの最大マッチングが取れるか
+    // (= その制限を満たす妥当な Kekule 構造 + H 配置が存在するか)。
+    let feasible = |a: usize, shift: Shift| -> bool {
+        let (graph, matched) = build(Some((a, shift)));
+        graph.max_matching(&mut matched.clone(), &no_skip) == mu
+    };
+
+    cands
+        .iter()
+        .map(|grp| {
+            grp.iter()
+                .map(|&a| {
+                    if !in_pi(a) {
+                        return false;
+                    }
+                    (donor_h(a) >= 1 && feasible(a, Shift::Fewer))
+                        || (n_double(a) >= 1 && feasible(a, Shift::More))
+                })
+                .collect()
         })
         .collect()
+}
+
+/// [`hub_allowed_endpoints`] の制限方向 (端点の可動 H 数を今より 1 個
+/// 減らす / 増やす)。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shift {
+    Fewer,
+    More,
 }
 
 pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
@@ -897,35 +1035,31 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             by_root.entry(uf.find(i)).or_default().push(i);
         }
     }
-    // I22: 検出済みの群を「本当に H が移動できるか」で検証し、交互パスが
-    // 通らないメンバーを落とす (偽陽性フィルタ)。頂点分割のない π 全体の
-    // グラフ上でブロッサム法により厳密に判定する — 縮環をまたぐ長い
-    // 再 Kekule 化の連鎖が実際には破綻するケース (例: `[H]Oc1c[nH]c2ccnc-2n1`
-    // の環外 OH) を、局所パターンだけを見る `seed_groups` では弾けない。
-    let reach = exact_reachability(g);
-    let exact_linked =
-        |a: usize, b: usize| -> bool { reach[a].contains(&b) || reach[b].contains(&a) };
+    // I22/I24: 検出済みの群を「本当にそこで H が可動か」で検証し、動けない
+    // メンバーを落とす (偽陽性フィルタ)。頂点分割のない π 全体のグラフに
+    // 群ごとの t-group ハブを足し、ブロッサム法の最大マッチングで厳密に
+    // 判定する ([`hub_allowed_endpoints`]) — 縮環をまたぐ長い再 Kekule 化の
+    // 連鎖が実際には破綻するケース (例: `[H]Oc1c[nH]c2ccnc-2n1` の環外 OH)
+    // を、局所パターンだけを見る `seed_groups` では弾けない。
+    let mut cands: Vec<Vec<usize>> = by_root.into_values().collect();
+    for c in cands.iter_mut() {
+        c.sort_unstable();
+    }
+    cands.sort();
+    let allowed = hub_allowed_endpoints(g, &cands);
     let mut groups: Vec<(Vec<usize>, u8)> = Vec::new();
-    for (_, grp) in by_root {
-        // 群内を厳密到達可能性で再連結し、連結成分ごとに分ける
-        let mut sub = UnionFind::new(n);
-        for (i, &a) in grp.iter().enumerate() {
-            for &b in &grp[i + 1..] {
-                if exact_linked(a, b) {
-                    sub.union(a, b);
-                }
-            }
-        }
-        let mut parts: std::collections::HashMap<usize, Vec<usize>> =
-            std::collections::HashMap::new();
-        for &a in &grp {
-            parts.entry(sub.find(a)).or_default().push(a);
-        }
-        for (_, mut grp) in parts {
+    {
+        for (gi, cand) in cands.iter().enumerate() {
+            let grp: Vec<usize> = cand
+                .iter()
+                .copied()
+                .zip(allowed[gi].iter())
+                .filter(|&(_, &ok)| ok)
+                .map(|(a, _)| a)
+                .collect();
             if grp.len() < 2 {
                 continue;
             }
-            grp.sort_unstable();
             let total_h: usize = grp.iter().map(|&e| n_h_of(g, e)).sum();
             let raw_neg = grp
                 .iter()
@@ -1534,10 +1668,10 @@ mod tests {
         assert_eq!(groups[0].0.len(), 3);
     }
 
-    /// I22: 検出済みの群を「本当に交互パスが通るか」で厳密検証し、通らない
-    /// メンバーを落とす (exact_reachability)。縮環をまたぐ長い再 Kekule 化の
-    /// 連鎖が実際には破綻するケースを、局所パターンだけの seed_groups では
-    /// 弾けなかった。
+    /// I22/I24: 検出済みの群を「本当にそこで H が可動か」で厳密検証し、
+    /// 動けないメンバーを落とす ([`hub_allowed_endpoints`])。縮環をまたぐ
+    /// 長い再 Kekule 化の連鎖が実際には破綻するケースを、局所パターン
+    /// だけの seed_groups では弾けなかった。
     #[test]
     fn mobile_h_exact_filter_drops_unreachable_endpoints() {
         // 6-5 縮環アザインドール型 + 環外 OH。局所的には OH-C=N の 1,3 パターンに
@@ -1549,7 +1683,42 @@ mod tests {
         assert!(mobile_groups(&g).is_empty());
     }
 
-    /// I22 の厳密検証は、二重結合を 2 本持つスルホニル S を容量 2 の頂点複製で
+    /// I24: 2 個の可動 H が**別々の群で同時に**動くことで初めて成立する
+    /// 互変異性 (ポリアザ縮環)。単一の交互パス判定 (I22) では、対称差が
+    /// 2 本の独立したパスに分かれるため永久に繋がらない。t-group ハブを
+    /// 置くと 2 本がハブ経由で 1 本の交互閉路になり正しく判定できる。
+    #[test]
+    fn mobile_h_two_groups_shift_simultaneously() {
+        // `[H]Oc1cc2c[nH]nc2nn1`: 環外 OH と環内 N が 1 群 (H,7,10)、
+        // ピラゾール側の 3 つの N がもう 1 群 (H,6,8,9) になる。I22 までは
+        // 前者が作れず OH が固定されていた。
+        let g = build_molecule_graph("[H]Oc1cc2c[nH]nc2nn1").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups, vec![(vec![0, 9], 1), (vec![5, 6, 8], 1)]);
+
+        // 対照 (同じ 6-5 縮環でも縮環結合が単結合で書かれる型): こちらは
+        // 環外 OH が固定されたままでなければならない。局所パターンは同一で、
+        // 大域的な Kekule 充足可能性でも区別できない (I24 の棄却案 1)。
+        let g = build_molecule_graph("[H]Oc1nc[nH]c2ccnc1-2").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert!(!groups[0].0.contains(&0), "環外 O(0) は群に入らない");
+    }
+
+    /// I24: 端点の可動性は「H 数が今と違う値も取れること」で判定する。
+    /// 「H を手放せるか」だけを見るとアミジンの =NH を落としてしまう —
+    /// 相方の NH2 が容量一杯なので必ず H を 1 個持つが、「H を 2 個持つ」側
+    /// (`CC(N)=N`) へは動けるので可動である。
+    #[test]
+    fn mobile_h_amidine_endpoint_that_can_only_gain() {
+        let g = build_molecule_graph("CC(=N)N").unwrap();
+        let groups = mobile_groups(&g);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0.len(), 2);
+        assert_eq!(groups[0].1, 3, "可動 H は 3 個");
+    }
+
+    /// 厳密検証は、二重結合を 2 本持つスルホニル S を容量 2 の頂点複製で
     /// 扱う。単純マッチング (1 原子 1 マッチ) だと S=O を 1 本しか表現できず、
     /// スルホン酸の 3 つの O が 1 群にならなくなる回帰があった。
     #[test]
@@ -1638,9 +1807,9 @@ mod tests {
         // ため、群は一切形成されないのが正しい。
         //
         // I19 §3.4 ではこれを「橋頭を含む環のメンバーなら集約判定を無効化」
-        // という局所的な近似で実現していたが、I22 の厳密な交互パス検証
-        // (exact_reachability) が同じ結論をより正確に出せるため近似は撤去
-        // した。このテストは撤去後も結論が変わらないことを固定する。
+        // という局所的な近似で実現していたが、I22/I24 の厳密な検証
+        // (hub_allowed_endpoints) が同じ結論をより正確に出せるため近似は
+        // 撤去した。このテストは撤去後も結論が変わらないことを固定する。
         let g = build_molecule_graph("Oc1cn2cccc2cn1").unwrap();
         assert!(mobile_groups(&g).is_empty());
 

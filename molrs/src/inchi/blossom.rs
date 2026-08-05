@@ -132,6 +132,89 @@ impl MatchGraph {
         }
         odd_reached
     }
+
+    /// `matched` を初期マッチングとして増加路を繰り返し探し、最大マッチングの
+    /// 辺数を返す (I24)。`skip[v]` が真の頂点はグラフから取り除かれたものとして
+    /// 扱う (`matched` 側にも残っていてはならない — 呼び出し側で外すこと)。
+    ///
+    /// [`Self::alternating_reachable`] が「1 個の供与体から出る 1 本の交互路」
+    /// しか見ないのに対し、こちらは完全マッチングの存在判定に使う。t-group の
+    /// 仮想ハブ頂点を含むグラフでは全頂点がマッチ済みになるため「露出頂点から
+    /// 探索」が使えず、「辺 (a, hub) を含む最大マッチングが存在するか」
+    /// = 「`G − a − hub` の最大マッチングが 1 本だけ小さいか」で判定する。
+    pub(crate) fn max_matching(&self, matched: &mut [Option<usize>], skip: &[bool]) -> usize {
+        for root in 0..self.n {
+            if skip[root] || matched[root].is_some() {
+                continue;
+            }
+            if let Some((last, parent)) = self.find_augmenting_path(matched, skip, root) {
+                // 増加路に沿ってマッチを反転する。
+                let mut v = last;
+                loop {
+                    let pv = parent[v].expect("augmenting path vertex must have parent");
+                    let ppv = matched[pv];
+                    matched[v] = Some(pv);
+                    matched[pv] = Some(v);
+                    match ppv {
+                        Some(next) => v = next,
+                        None => break,
+                    }
+                }
+            }
+        }
+        matched.iter().filter(|m| m.is_some()).count() / 2
+    }
+
+    /// 露出頂点 `root` から交互木を伸ばし、別の露出頂点で終わる増加路を探す
+    /// (Edmonds のブロッサム法、標準形)。見つかれば (終点, 親配列) を返す。
+    fn find_augmenting_path(
+        &self,
+        matched: &[Option<usize>],
+        skip: &[bool],
+        root: usize,
+    ) -> Option<(usize, Vec<Option<usize>>)> {
+        let n = self.n;
+        let mut used = vec![false; n];
+        let mut parent: Vec<Option<usize>> = vec![None; n];
+        let mut base: Vec<usize> = (0..n).collect();
+
+        used[root] = true;
+        let mut queue = VecDeque::new();
+        queue.push_back(root);
+
+        while let Some(v) = queue.pop_front() {
+            for &to in &self.adj[v] {
+                if skip[to] || base[v] == base[to] || matched[v] == Some(to) {
+                    continue;
+                }
+                if to == root || (matched[to].is_some() && parent[matched[to].unwrap()].is_some()) {
+                    let curbase = lca(matched, &parent, &base, v, to);
+                    let mut in_blossom = vec![false; n];
+                    mark_path(matched, &mut parent, &base, &mut in_blossom, v, curbase, to);
+                    mark_path(matched, &mut parent, &base, &mut in_blossom, to, curbase, v);
+                    for i in 0..n {
+                        if in_blossom[base[i]] {
+                            base[i] = curbase;
+                            if !used[i] {
+                                used[i] = true;
+                                queue.push_back(i);
+                            }
+                        }
+                    }
+                } else if parent[to].is_none() {
+                    parent[to] = Some(v);
+                    match matched[to] {
+                        None => return Some((to, parent)),
+                        Some(partner) => {
+                            used[partner] = true;
+                            queue.push_back(partner);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 /// v, to から交互木を根 (露出頂点) に向かって遡り、最初に共有する
@@ -266,6 +349,43 @@ mod tests {
         let g = MatchGraph::new(3);
         let m = matching(3, &[]);
         assert!(g.alternating_reachable(&m, 0).is_empty());
+    }
+
+    #[test]
+    fn max_matching_augments_odd_path() {
+        // 0-1-2-3-4 のパス。初期マッチが 1-2 だけでも最大 (2 本) まで増える。
+        let mut g = MatchGraph::new(5);
+        for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 4)] {
+            g.add_edge(a, b);
+        }
+        let mut m = matching(5, &[(1, 2)]);
+        assert_eq!(g.max_matching(&mut m, &[false; 5]), 2);
+    }
+
+    #[test]
+    fn max_matching_handles_blossom() {
+        // 5 員環 0-1-2-3-4-0 に尻尾 0-5。完全マッチング (3 本) が存在するが、
+        // 素朴な交互 BFS では奇閉路の収縮なしに見つけられない。
+        let mut g = MatchGraph::new(6);
+        for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0), (0, 5)] {
+            g.add_edge(a, b);
+        }
+        let mut m = matching(6, &[(1, 2)]);
+        assert_eq!(g.max_matching(&mut m, &[false; 6]), 3);
+    }
+
+    #[test]
+    fn max_matching_skips_removed_vertices() {
+        // 5 頂点の完全マッチングから 1 頂点を除くと奇数頂点になり 1 本減る。
+        let mut g = MatchGraph::new(6);
+        for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)] {
+            g.add_edge(a, b);
+        }
+        let mut skip = [false; 6];
+        skip[0] = true;
+        let mut m = vec![None; 6];
+        assert_eq!(g.max_matching(&mut m, &skip), 2);
+        assert!(m[0].is_none());
     }
 
     #[test]
