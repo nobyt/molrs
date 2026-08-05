@@ -195,7 +195,72 @@ fn tetra_raw_parity(
     let dst: Vec<usize> = canon_asc.iter().map(|&(_, _, id)| id).collect();
     let pp = perm_parity(&src, &dst);
     let rs_bit = if rs == 'R' { 1 } else { 0 };
-    Some(if (rs_bit ^ pp) == 1 { '-' } else { '+' })
+    // 重原子 4 個の中心 (第四級) は 1 個反転する (I30)。
+    //
+    // R/S 側 (`crate::stereo::assign_atom_chiral_codes`) は隣接 3 個 + 暗黙 H の
+    // ときだけ `n_swaps += 1` の補正を入れる。こちらの仮想 H (CIP 最下位 =
+    // 並びの先頭、正準番号最大 = 並びの末尾) を 4 要素の置換に含めると、その
+    // 補正とちょうど打ち消し合って 3 重原子 + H の場合は正しくなるが、
+    // 重原子 4 個の場合は打ち消す相手がないぶん符号が 1 つずれる。
+    //
+    // 最小再現: `C[C@](N)(O)CC` は実 InChI が `/t4-/m0/s1`、補正なしだと
+    // `/m1` になる。`C[C@H](N)C(=O)O` (3 重原子 + H) は補正なしで正しい。
+    let quaternary = usize::from(heavy.len() == 4);
+    Some(if (rs_bit ^ pp ^ quaternary) == 1 {
+        '-'
+    } else {
+        '+'
+    })
+}
+
+/// **立体源性だが SMILES で配置が指定されていない**四面体中心か (I30)。
+///
+/// 実 InChI はこの中心を `/t` に `12?` として列挙する。molrs は
+/// [`tetra_raw_parity`] が `chiral_tag` 無しで `None` を返すため、従来は
+/// 完全に脱落していた (PubChem 実データで 239 件の不一致の原因)。
+///
+/// 置換基が互いに異なるかは **1-WL 精緻化色** ([`refined_colors`]) で見る。
+/// CIP ランクは同順位をほとんど作らない全順序に近く、これで判定すると sp3
+/// 炭素が軒並み立体源性になってしまう (実測 94.66% → 61.76% に悪化した)。
+/// 1-WL 色は対称な枝 (イソプロピルの 2 つのメチル等) に同じ色を与えるので、
+/// 「4 つの置換基が構成的に区別できるか」を正しく表す。
+fn is_undefined_tetra(
+    g: &MoleculeGraph,
+    comp: &Component,
+    colors: &[usize],
+    center: usize,
+) -> bool {
+    let a = &g.atoms[center];
+    if a.chiral_tag.is_some() || a.is_aromatic {
+        return false;
+    }
+    // 四面体になりうる中心元素。炭素以外は実 InChI が扱う範囲に絞る
+    // (第 14 族と、孤立電子対を置換基に数えない荷電 N/P/S)。
+    let ok_elem = match a.symbol.as_str() {
+        "C" | "Si" | "Ge" | "Sn" => true,
+        "N" | "P" | "S" => a.formal_charge > 0,
+        _ => false,
+    };
+    if !ok_elem {
+        return false;
+    }
+    let heavy: Vec<usize> = g.adjacency[center]
+        .iter()
+        .copied()
+        .filter(|&nb| g.atoms[nb].symbol != "H")
+        .collect();
+    let n_h = g.adjacency[center].len() - heavy.len();
+    // 4 heavy か 3 heavy + 1 H のみ (二重結合を持つ中心は接続数が 4 未満)
+    if !(heavy.len() == 4 && n_h == 0 || heavy.len() == 3 && n_h == 1) {
+        return false;
+    }
+    // 重原子置換基の 1-WL 色が互いに相異なること (H は 1 個までなので
+    // 重原子とは必ず区別できる)
+    let mut cs: Vec<usize> = heavy.iter().map(|&nb| colors[canon_of(comp, nb)]).collect();
+    cs.sort_unstable();
+    let before = cs.len();
+    cs.dedup();
+    cs.len() == before
 }
 
 /// 正準番号空間の色 (自己同型が保たなければならない原子の不変量) を
@@ -375,11 +440,24 @@ pub(crate) fn tetrahedral_layers(
     if centers.is_empty() {
         return (String::new(), None, None);
     }
+    // 未定義の立体源性中心 (`?`): **定義済みの中心が 1 つでもある場合のみ**
+    // 併記する (I30)。全て未定義の分子では `/t` 層自体が省略される —
+    // `CC(CN)O` の実 InChI に `/t3?` が付かないのがこれで、`/b` 側の未定義
+    // 二重結合とまったく同じ規則。
+    let mut defined = centers.clone();
+    defined.sort_unstable();
+    let colors = refined_colors(g, comp);
+    for &orig in &comp.inv {
+        if is_undefined_tetra(g, comp, &colors, orig) {
+            centers.push((canon_of(comp, orig), '?'));
+        }
+    }
     centers.sort_unstable();
-    // /m 正規化: 最初の中心の生パリティが '+' なら全反転して '-' に、m=1。
-    let invert = centers[0].1 == '+';
+    // /m 正規化: 最初の**定義済み**中心の生パリティが '+' なら全反転して
+    // '-' に、m=1。未定義中心 (`?`) は反転の対象にも基準にもならない。
+    let invert = defined[0].1 == '+';
     // メソ体 (鏡像が自分自身と一致) では実 InChI は /m・/s を出さない。
-    let m = if is_achiral(g, comp, &centers) {
+    let m = if is_achiral(g, comp, &defined) {
         None
     } else {
         Some(if invert { '1' } else { '0' })
@@ -387,7 +465,7 @@ pub(crate) fn tetrahedral_layers(
     let t = centers
         .iter()
         .map(|&(c, p)| {
-            let shown = if invert {
+            let shown = if invert && p != '?' {
                 if p == '+' {
                     '-'
                 } else {

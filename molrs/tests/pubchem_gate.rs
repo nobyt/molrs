@@ -77,7 +77,7 @@ fn pubchem_full_inchi() {
     std::panic::set_hook(prev);
     let acc = ok as f64 / n.max(1) as f64;
     println!("pubchem full InChI: {ok}/{n} exact ({:.2}%)", acc * 100.0);
-    // I29 実測 94.66%。残る不一致の内訳は RUST_INCHI_I29_PLAN.md を参照
-    // (立体 /t /m /s が最大、次いで電荷正規化・/b・128 原子超のパニック)。
-    assert!(acc >= 0.945, "pubchem InChI accuracy {acc:.4} < 0.945");
+    // I29 94.66% → I30 96.97% (未定義四面体中心 `?` + 第四級中心のパリティ)。
+    // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
+    assert!(acc >= 0.969, "pubchem InChI accuracy {acc:.4} < 0.969");
 }
