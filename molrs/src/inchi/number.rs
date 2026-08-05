@@ -522,7 +522,17 @@ fn seed_groups(
                 endpoints.push(nb);
             }
         }
-        if !has_double || !has_single_from_center || endpoints.len() < 2 {
+        // 中心に受容体 (二重結合したヘテロ端点) が無くても、中心自身が実在の
+        // 二重結合を**炭素側に**持ち、供与体端点が 2 つ以上あるなら種にする。
+        // 尿酸 `O=c1[nH]c(=O)c2[nH]c(=O)[nH]c2[nH]1` の縮環炭素がこれで、
+        // 2 つの環の N-H (N7/N8) が縮環炭素 C2 を中心とする 1,3 の関係にある。
+        // C2 の二重結合は相方の縮環炭素 C1 に向いているので受容体端点が無く、
+        // 従来の星型判定では種にならなかった — しかし C1 が芳香系の中で
+        // 二重結合を手放せるため C2=N7 / C2=N8 は成立し、実 InChI は 4 つの
+        // N-H と 3 つの O を 1 群 `(H4,6,7,8,9,10,11,12)` にする。
+        // 頂点分割 (ブリッジ探索) は縮環をまたげないので、この局所検出が要る。
+        let donor_relay = !has_double && has_own_double(g, kekule, center);
+        if !(has_double || donor_relay) || !has_single_from_center || endpoints.len() < 2 {
             continue;
         }
         // O/S 端点だけで酸系 (二重 O/S ≥1 かつ 供与体 O/S ≥1) を成すなら、

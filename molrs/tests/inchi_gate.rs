@@ -343,7 +343,12 @@ fn full_inchi_matches_rdkit_where_produced() {
     //     c/h/q 層が骨格の自己同型で不変なので、どちらの半分が小さい番号を
     //     取るかは /b 層で決まる。InChI の内部パリティは奇 (`-`) = 1 <
     //     偶 (`+`) = 2 なので Z 側が先。99.97% → 99.99% (+1)。
-    assert!(acc >= 0.9998, "full InChI accuracy {acc:.4} < 0.9998");
+    // I28: 尿酸型の縮環炭素を種の中心に認めた。99.99% → 100.00% (+1)。
+    //
+    // コーパス全件一致に到達したので、以降は率ではなく**完全一致**を課す
+    // (1 件でも落ちれば失敗)。率の閾値と違い浮動小数の誤差を考えなくてよく、
+    // 失敗時に何件落ちたかがそのまま出る。
+    assert_eq!(ok, produced, "full InChI must match on the whole corpus");
 }
 
 #[test]
@@ -419,7 +424,9 @@ fn to_inchi_key_matches_rdkit_where_produced() {
     // I24 (2026-08-05): BNS t-group ハブ。99.61% → 99.78%。
     // I25 (2026-08-05): シフト位置条件でブリッジ探索を制限。99.78% → 99.86%。
     // I26 (2026-08-05): h/q 層の文字列最小化。99.86% → 99.99%。
-    assert!(acc >= 0.9998, "to_inchi_key accuracy {acc:.4} < 0.9998");
+    // I27 (2026-08-05): /b 層の最小化。99.99%。
+    // I28 (2026-08-05): 尿酸型の縮環炭素。100.00%。
+    assert_eq!(ok, produced, "InChIKey must match on the whole corpus");
     // 注: full InChI 98.75% / key 98.80% (I19 §3.4 追加修正 2 時点)
     // 注: full InChI 97.42% / key 97.44% (I19 §3.2 精緻化時点)
 }
