@@ -44,12 +44,12 @@ fn load() -> Vec<Record> {
         .collect()
 }
 
-/// 生成できなければ None (128 原子超の `Unsupported`、超原子価ハロゲンの
-/// `InvalidSmiles` など) で、いずれも「不一致」として数える。
+/// 生成できなければ None (超原子価ハロゲンの `InvalidSmiles` など) で、
+/// 「不一致」として数える。
 ///
 /// I29 の時点では 128 原子超が `rings.rs` の `assert!` でパニックしたため
-/// ここで `catch_unwind` していたが、I31 で `ChemError::Unsupported` を返す
-/// ようになったので不要になった。
+/// ここで `catch_unwind` していた。I31 で `ChemError::Unsupported` に変え、
+/// I33 で上限そのものを撤廃したので、どちらも不要になった。
 fn try_inchi(smiles: &str) -> Option<String> {
     let g = build_molecule_graph(smiles).ok()?;
     molrs::inchi::to_inchi(&g).ok()
@@ -73,7 +73,8 @@ fn pubchem_full_inchi() {
     println!("pubchem full InChI: {ok}/{n} exact ({:.2}%)", acc * 100.0);
     // I29 94.66% → I30 96.97% (未定義四面体中心 `?` + 第四級中心のパリティ)
     //            → I31 97.05% (成分単位の電荷中性化)
-    //            → I32 97.80% (可動 H 群にかかる /b の除外、/m の `.` 連結)。
+    //            → I32 97.80% (可動 H 群にかかる /b の除外、/m の `.` 連結)
+    //            → I33 98.01% (環認識の 128 原子上限を撤廃)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.977, "pubchem InChI accuracy {acc:.4} < 0.977");
+    assert!(acc >= 0.980, "pubchem InChI accuracy {acc:.4} < 0.980");
 }

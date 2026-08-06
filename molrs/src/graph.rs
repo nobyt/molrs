@@ -280,22 +280,6 @@ pub fn build_molecule_graph(smiles: &str) -> Result<MoleculeGraph, ChemError> {
         })
         .collect();
     kekulize(&arom_atoms, &mut arom_bonds)?;
-    // 環認識は原子と結合を u128 のビットマスク (`rings::RingInvar`) で扱うため
-    // 128 個までしか載らない。以前はここで `rings.rs` の `assert!` によって
-    // パニックしていたが (ペプチド等でごく普通に踏む)、**正当な入力で
-    // ライブラリがパニックするのは呼び出し側から回避できない**ので、
-    // エラーとして返す (I31)。上限そのものを上げるには RingInvar を動的
-    // ビットセットにする必要があるが、RDKit の RINGINVAR と数値比較の順序を
-    // 一致させている都合で環認識の結果が変わりうるため別課題とする。
-    //
-    // 判定は原子数のみ (従来の `assert!` と同じ条件)。結合数が 128 を超える
-    // 分子でも、環に使われる結合の index が 128 未満なら実際には正しく動く
-    // ため、結合数でも弾くと従来通っていた 7 件が落ちる。
-    if n_heavy > 128 {
-        return Err(ChemError::Unsupported(format!(
-            "molecule too large for ring perception ({n_heavy} atoms; limit 128)"
-        )));
-    }
     // RDKit と同じく対称化 SSSR を環情報として使う (芳香族認識にも同じものを渡す)
     let sssr_rings = symmetrized_sssr(n_heavy, &edges);
     let (atom_arom, bond_arom) = perceive_aromaticity(&arom_atoms, &arom_bonds, &sssr_rings);

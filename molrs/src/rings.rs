@@ -14,13 +14,88 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const NIL: usize = usize::MAX;
 
+/// 可変長ビットセット (I33 で `u128` から置き換え)。
+///
+/// 環認識は原子集合・結合集合をビットマスクで扱うが、`u128` だと 128 個で
+/// 頭打ちになり、ペプチド等がごく普通に上限を踏んでいた。
+///
+/// `Ord` は **`u128` の数値比較とまったく同じ順序**にしてある — 最上位の
+/// 立っているビットが大きい方が大きい。RDKit の RINGINVAR は数値比較で
+/// 順序が決まり、それが「どの環を残すか」の結果を左右するため、ここを
+/// 変えてはいけない。
+#[derive(Clone, Default, Debug)]
+struct BitSet {
+    /// リトルエンディアンのワード列 (w[0] が下位 64 ビット)
+    w: Vec<u64>,
+}
+
+impl BitSet {
+    fn set(&mut self, i: usize) {
+        let word = i / 64;
+        if self.w.len() <= word {
+            self.w.resize(word + 1, 0);
+        }
+        self.w[word] |= 1u64 << (i % 64);
+    }
+    /// `self & !other == 0` (self ⊆ other)
+    fn is_subset_of(&self, other: &Self) -> bool {
+        self.w
+            .iter()
+            .enumerate()
+            .all(|(k, &x)| x & !other.w.get(k).copied().unwrap_or(0) == 0)
+    }
+    /// `(self & other).count_ones()`
+    fn intersection_count(&self, other: &Self) -> u32 {
+        self.w
+            .iter()
+            .zip(other.w.iter())
+            .map(|(&a, &b)| (a & b).count_ones())
+            .sum()
+    }
+    fn union_with(&mut self, other: &Self) {
+        if self.w.len() < other.w.len() {
+            self.w.resize(other.w.len(), 0);
+        }
+        for (k, &x) in other.w.iter().enumerate() {
+            self.w[k] |= x;
+        }
+    }
+}
+
+impl Ord for BitSet {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // 上位ワードから比較 = 数値としての大小 (末尾のゼロワードは無視される)
+        let n = self.w.len().max(other.w.len());
+        for k in (0..n).rev() {
+            let a = self.w.get(k).copied().unwrap_or(0);
+            let b = other.w.get(k).copied().unwrap_or(0);
+            if a != b {
+                return a.cmp(&b);
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
+impl PartialOrd for BitSet {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+// 末尾のゼロワードの有無で等価性が変わらないよう cmp 経由で判定する
+impl PartialEq for BitSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+impl Eq for BitSet {}
+
 /// 環の原子集合ビットマスク (RDKit RINGINVAR 相当; 数値比較の順序も一致)
-type RingInvar = u128;
+type RingInvar = BitSet;
 
 fn ring_invariant(ring: &[usize]) -> RingInvar {
-    let mut m: RingInvar = 0;
+    let mut m = RingInvar::default();
     for &a in ring {
-        m |= 1 << a;
+        m.set(a);
     }
     m
 }
@@ -35,7 +110,6 @@ struct Graph {
 
 impl Graph {
     fn new(n_atoms: usize, bonds: &[(usize, usize)]) -> Self {
-        assert!(n_atoms <= 128, "molecule too large for ring perception");
         let mut adj = vec![Vec::new(); n_atoms];
         for (ei, &(a, b)) in bonds.iter().enumerate() {
             adj[a].push((b, ei));
@@ -334,14 +408,14 @@ fn find_rings_d2_nodes(
             let invr = ring_invariant(nring);
             add_ring_if_new(g, nring, res, invars, Some(ring_bonds), Some(ring_atoms));
 
-            node_invars.entry(cand).or_default().push(invr);
+            node_invars.entry(cand).or_default().push(invr.clone());
             for (&node, invs) in &node_invars {
                 if node != cand && invs.contains(&invr) {
                     dup_map.entry(cand).or_default().push(node);
                     dup_map.entry(node).or_default().push(cand);
                 }
             }
-            dup_d2_cands.entry(invr).or_default().push(cand);
+            dup_d2_cands.entry(invr.clone()).or_default().push(cand);
         }
 
         // 環が見つからなかった場合のみ、この場で刈り取る (Issue 134 対応)
@@ -429,12 +503,12 @@ fn remove_extra_rings(g: &Graph, res: &mut Vec<Vec<usize>>) -> Vec<Vec<usize>> {
     res.sort_by_key(|r| r.len());
 
     let brings: Vec<Vec<usize>> = res.iter().map(|r| g.to_bond_ring(r)).collect();
-    let bit_brings: Vec<u128> = brings
+    let bit_brings: Vec<BitSet> = brings
         .iter()
         .map(|br| {
-            let mut m: u128 = 0;
+            let mut m = BitSet::default();
             for &bi in br {
-                m |= 1 << bi;
+                m.set(bi);
             }
             m
         })
@@ -443,16 +517,16 @@ fn remove_extra_rings(g: &Graph, res: &mut Vec<Vec<usize>>) -> Vec<Vec<usize>> {
     let n = res.len();
     let mut avail = vec![true; n];
     let mut keep = vec![false; n];
-    let mut munion: u128 = 0;
+    let mut munion = BitSet::default();
 
     for i in 0..n {
-        if bit_brings[i] & !munion == 0 {
+        if bit_brings[i].is_subset_of(&munion) {
             avail[i] = false;
         }
         if !avail[i] {
             continue;
         }
-        munion |= bit_brings[i];
+        munion.union_with(&bit_brings[i]);
         keep[i] = true;
 
         let mut consider = vec![false; n];
@@ -467,7 +541,7 @@ fn remove_extra_rings(g: &Graph, res: &mut Vec<Vec<usize>>) -> Vec<Vec<usize>> {
             let mut j = i + 1;
             while j < n && brings[j].len() == brings[i].len() {
                 if consider[j] && avail[j] {
-                    let overlap = (bit_brings[j] & munion).count_ones() as i64;
+                    let overlap = bit_brings[j].intersection_count(&munion) as i64;
                     if overlap > best_overlap {
                         best_overlap = overlap;
                         best_j = j;
@@ -476,12 +550,12 @@ fn remove_extra_rings(g: &Graph, res: &mut Vec<Vec<usize>>) -> Vec<Vec<usize>> {
                 j += 1;
             }
             consider[best_j] = false;
-            if bit_brings[best_j] & !munion == 0 {
+            if bit_brings[best_j].is_subset_of(&munion) {
                 avail[best_j] = false;
             } else {
                 keep[best_j] = true;
                 avail[best_j] = false;
-                munion |= bit_brings[best_j];
+                munion.union_with(&bit_brings[best_j]);
             }
         }
     }
