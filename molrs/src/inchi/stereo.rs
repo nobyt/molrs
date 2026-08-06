@@ -182,13 +182,17 @@ fn tetra_raw_parity(
         .iter()
         .filter(|&&nb| g.atoms[nb].symbol == "H")
         .count();
-    // 4 heavy か 3 heavy + 1 H のみ対応 (孤立電子対中心は v2)
+    // 4 heavy、3 heavy + 1 H、または 3 heavy + 孤立電子対 (スルホキシド等)。
     let mut items: Vec<(i64, i64, usize)> = heavy
         .iter()
         .map(|&nb| (canon_of(comp, nb) as i64, ranks[nb] as i64, nb))
         .collect();
-    if heavy.len() == 3 && n_h == 1 {
-        items.push((i64::MAX, -1, usize::MAX)); // 仮想 H
+    if heavy.len() == 3 {
+        // 仮想の 4 番目: 暗黙 H、または孤立電子対 (I34)。どちらも CIP 最下位・
+        // 正準番号最大として扱う。スルホキシド `[S@](=O)` のような孤立電子対
+        // 中心は R/S 側 (`assign_atom_chiral_codes` の `legal`) が既にタグを
+        // 付けているので、ここで受け入れれば `/t` に載る。
+        items.push((i64::MAX, -1, usize::MAX));
     } else if heavy.len() != 4 {
         return None;
     }
@@ -201,18 +205,17 @@ fn tetra_raw_parity(
     let dst: Vec<usize> = canon_asc.iter().map(|&(_, _, id)| id).collect();
     let pp = perm_parity(&src, &dst);
     let rs_bit = if rs == 'R' { 1 } else { 0 };
-    // 重原子 4 個の中心 (第四級) は 1 個反転する (I30)。
-    //
-    // R/S 側 (`crate::stereo::assign_atom_chiral_codes`) は隣接 3 個 + 暗黙 H の
-    // ときだけ `n_swaps += 1` の補正を入れる。こちらの仮想 H (CIP 最下位 =
+    // R/S 側 (`crate::stereo::assign_atom_chiral_codes`) は **隣接 3 個 + 暗黙 H**
+    // のときだけ `n_swaps += 1` の補正を入れる。こちらの仮想 4 番目 (CIP 最下位 =
     // 並びの先頭、正準番号最大 = 並びの末尾) を 4 要素の置換に含めると、その
-    // 補正とちょうど打ち消し合って 3 重原子 + H の場合は正しくなるが、
-    // 重原子 4 個の場合は打ち消す相手がないぶん符号が 1 つずれる。
+    // 補正とちょうど打ち消し合う。よって R/S 側が補正を入れなかった場合
+    // — 重原子 4 個 (第四級) と、3 重原子 + 孤立電子対 (スルホキシド) —
+    // だけ、打ち消す相手がないぶん符号が 1 つずれるので反転する (I30/I34)。
     //
     // 最小再現: `C[C@](N)(O)CC` は実 InChI が `/t4-/m0/s1`、補正なしだと
     // `/m1` になる。`C[C@H](N)C(=O)O` (3 重原子 + H) は補正なしで正しい。
-    let quaternary = usize::from(heavy.len() == 4);
-    Some(if (rs_bit ^ pp ^ quaternary) == 1 {
+    let needs_flip = usize::from(!(heavy.len() == 3 && n_h == 1));
+    Some(if (rs_bit ^ pp ^ needs_flip) == 1 {
         '-'
     } else {
         '+'
@@ -240,24 +243,44 @@ fn is_undefined_tetra(
     if a.chiral_tag.is_some() || a.is_aromatic {
         return false;
     }
-    // 四面体になりうる中心元素。炭素以外は実 InChI が扱う範囲に絞る
-    // (第 14 族と、孤立電子対を置換基に数えない荷電 N/P/S)。
-    let ok_elem = match a.symbol.as_str() {
-        "C" | "Si" | "Ge" | "Sn" => true,
-        "N" | "P" | "S" => a.formal_charge > 0,
-        _ => false,
-    };
-    if !ok_elem {
-        return false;
-    }
     let heavy: Vec<usize> = g.adjacency[center]
         .iter()
         .copied()
         .filter(|&nb| g.atoms[nb].symbol != "H")
         .collect();
     let n_h = g.adjacency[center].len() - heavy.len();
-    // 4 heavy か 3 heavy + 1 H のみ (二重結合を持つ中心は接続数が 4 未満)
-    if !(heavy.len() == 4 && n_h == 0 || heavy.len() == 3 && n_h == 1) {
+    // 四面体になりうる中心元素。炭素以外は実 InChI が扱う範囲に絞る。
+    // 孤立電子対を 4 番目の置換基に数える中心 (スルホキシド `S(=O)` や
+    // ホスフィンオキシド) は重原子 3 個・H 0 個で立体源性になる (I34、
+    // `crate::stereo::assign_atom_chiral_codes` の `legal` と同じ範囲)。
+    let lone_pair_center = heavy.len() == 3 && n_h == 0;
+    let ok_elem = match a.symbol.as_str() {
+        "C" | "Si" | "Ge" | "Sn" => !lone_pair_center,
+        "P" | "As" => lone_pair_center,
+        // S/Se は原子価 4 (スルホキシド) か、原子価 3 のカチオン
+        "S" | "Se" => {
+            if lone_pair_center {
+                let val: f64 = g
+                    .bonds
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| b.begin_idx == center || b.end_idx == center)
+                    .map(|(bi, _)| g.kekule_bond_orders[bi])
+                    .sum();
+                val == 4.0 || (val == 3.0 && a.formal_charge == 1)
+            } else {
+                a.formal_charge > 0
+            }
+        }
+        "N" => a.formal_charge > 0 && !lone_pair_center,
+        _ => false,
+    };
+    if !ok_elem {
+        return false;
+    }
+    // 4 heavy / 3 heavy + 1 H / 3 heavy + 孤立電子対 のいずれか
+    // (二重結合を持つ通常の中心は接続数が 4 未満で弾かれる)
+    if !(heavy.len() == 4 && n_h == 0 || heavy.len() == 3 && n_h <= 1) {
         return false;
     }
     // 重原子置換基の 1-WL 色が互いに相異なること (H は 1 個までなので
