@@ -1200,8 +1200,135 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
             groups.push((grp, total_h as u8, neg as u8));
         }
     }
+    merge_charged_groups(g, &mut groups);
     groups.sort_by_key(|(m, _, _)| m[0]);
     groups
+}
+
+/// 「塩型」の端点か — 可動負電荷が乗りうる酸性の O-H/S-H (I38)。
+///
+/// 併合対象に取り込むのは**酸性の**ヒドロキシルだけ。単なるアルコール
+/// (糖の OH 等) は実 InChI でも固定 H のまま残る:
+///
+/// ```text
+/// NAD  …/h…,29-32H,…,(H5-,22,23,24,25,33,34,35,36,37)   ← 29-32 は糖の OH
+/// ```
+///
+/// 判定は「O/S に H (または負電荷) があり、結合先の重原子が**飽和炭素では
+/// ない**」。カルボン酸・リン酸 (C/P が O へ二重結合)、フェノール (芳香族 C)、
+/// エノール (二重結合を持つ C)、ヒドロキサム酸の N-O-H (炭素ですらない) が
+/// これで入り、糖・アルコールの sp3 C-O-H だけが落ちる。
+fn is_salt_endpoint(g: &MoleculeGraph, i: usize) -> bool {
+    let a = &g.atoms[i];
+    if !matches!(a.symbol.as_str(), "O" | "S" | "Se" | "Te") {
+        return false;
+    }
+    if n_h_of(g, i) == 0 && a.formal_charge >= 0 {
+        return false;
+    }
+    // ニトロ/N-オキシドの O- は共有結合の中性形の書き換えに過ぎず、可動電荷の
+    // 載り場所ではない。
+    if is_locked_zwitterion_neg(g, i) {
+        return false;
+    }
+    let kekule = kekule_order_map(g);
+    g.adjacency[i].iter().any(|&c| {
+        if g.atoms[c].symbol == "H" {
+            return false;
+        }
+        g.atoms[c].symbol != "C"
+            || g.atoms[c].is_aromatic
+            || g.adjacency[c].iter().any(|&nb| {
+                g.atoms[nb].symbol != "H"
+                    && kekule.get(&(c.min(nb), c.max(nb))).copied().unwrap_or(1.0) > 1.0
+            })
+    })
+}
+
+/// 可動電荷 (salt tautomerism) による群の併合 (I38)。
+///
+/// 成分から中性化のためにプロトンが外れると (`/p+n`)、実 InChI はその負電荷を
+/// **成分内のどの酸点にも載りうる可動電荷**として扱う。その結果、共役で
+/// 繋がっていない群どうしまで 1 つの群に併合される:
+///
+/// ```text
+/// smi  CC1=C(SC=[N+]1CC2=CN=C(N=C2N)C)CCOP(=O)(O)OP(=O)(O)OP(=O)(O)O
+/// got  …(H,22,23)(H2,13,14,15)(H2,17,18,19)/p+1   ← 群ごとに分かれている
+/// want …(H5-,13,14,15,17,18,19,20,21,22,23)/p+1   ← 全部が 1 群 + 負電荷
+/// ```
+///
+/// アミノピリミジン (N 端点) と三リン酸 (O 端点) は分子内で何も共有して
+/// いないが、負電荷が動ける以上 InChI は 1 群にする。従って併合の条件は
+/// 「その成分に可動負電荷が 1 つ以上ある」だけでよい。併合と同時に、群に
+/// 入っていなかった酸性 O-H ([`is_salt_endpoint`]) も端点として取り込む
+/// (カテコールの 2 つのフェノール性 OH だけからなる `(H-,40,41)` はこれで
+/// 初めて出る)。
+fn merge_charged_groups(g: &MoleculeGraph, groups: &mut Vec<(Vec<usize>, u8, u8)>) {
+    if groups.iter().all(|(_, _, neg)| *neg == 0) {
+        return;
+    }
+    // 重原子の連結成分
+    let n = g.atoms.len();
+    let mut comp = vec![usize::MAX; n];
+    let mut n_comp = 0usize;
+    for start in 0..n {
+        if comp[start] != usize::MAX || g.atoms[start].symbol == "H" {
+            continue;
+        }
+        let mut stack = vec![start];
+        comp[start] = n_comp;
+        while let Some(a) = stack.pop() {
+            for &nb in &g.adjacency[a] {
+                if g.atoms[nb].symbol != "H" && comp[nb] == usize::MAX {
+                    comp[nb] = n_comp;
+                    stack.push(nb);
+                }
+            }
+        }
+        n_comp += 1;
+    }
+    let mut charged = vec![false; n_comp];
+    for (eps, _, neg) in groups.iter() {
+        if *neg > 0 {
+            charged[comp[eps[0]]] = true;
+        }
+    }
+
+    let mut merged: Vec<Option<Vec<usize>>> = vec![None; n_comp];
+    let mut kept: Vec<(Vec<usize>, u8, u8)> = Vec::new();
+    for (eps, mh, neg) in groups.drain(..) {
+        let c = comp[eps[0]];
+        // 可動 H も (可動) 負電荷も持たない群 = ニトロ/N-オキシドの電荷分離を
+        // 拾っただけの疑似群。h 層には元から出ないので併合対象にもしない
+        // (取り込むとニトロの O が `(H-,…)` に紛れ込む)。
+        if charged[c] && (mh > 0 || neg > 0) {
+            merged[c].get_or_insert_with(Vec::new).extend(eps);
+        } else {
+            kept.push((eps, mh, neg));
+        }
+    }
+    // 群に入っていなかった酸性 O-H を取り込む
+    for i in 0..n {
+        if g.atoms[i].symbol == "H" || comp[i] == usize::MAX || !charged[comp[i]] {
+            continue;
+        }
+        let m = merged[comp[i]].get_or_insert_with(Vec::new);
+        if !m.contains(&i) && is_salt_endpoint(g, i) {
+            m.push(i);
+        }
+    }
+    for eps in merged.into_iter().flatten() {
+        let mut eps = eps;
+        eps.sort_unstable();
+        eps.dedup();
+        let total_h: usize = eps.iter().map(|&e| n_h_of(g, e)).sum();
+        let neg = eps
+            .iter()
+            .filter(|&&e| g.atoms[e].formal_charge < 0 && !is_locked_zwitterion_neg(g, e))
+            .count();
+        kept.push((eps, total_h as u8, neg as u8));
+    }
+    *groups = kept;
 }
 
 /// 可動 H 群のメンバー原子の bool マップ (番号付けの等価化に使う)。

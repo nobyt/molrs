@@ -78,7 +78,8 @@ fn pubchem_full_inchi() {
     //            → I34 98.21% (孤立電子対の立体中心 = スルホキシド)
     //            → I35 98.28% (超原子価ハロゲンの原子価表)
     //            → I36 98.35% (脱プロトンを酸性 O-H に限定)
-    //            → I37 98.44% (同位体層 /i)。
+    //            → I37 98.44% (同位体層 /i)
+    //            → I38 98.70% (可動電荷: 荷電可動 H 群の併合と酸点の拡大)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.984, "pubchem InChI accuracy {acc:.4} < 0.984");
+    assert!(acc >= 0.9869, "pubchem InChI accuracy {acc:.4} < 0.9869");
 }

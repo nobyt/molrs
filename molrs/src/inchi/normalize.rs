@@ -139,42 +139,74 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
     // できないが実 InChI は COOH から 1 個外した双性イオンを基準にして
     // `C7H15NO3/…/p+1` を出す。外さないと `/q+1` になってしまう。
     //
-    // **酸性の O-H/S-H だけ**が対象。隣の重原子 (C/N/S/P) が O/S へ二重結合を
-    // 持つもの — カルボン酸・スルホン酸・リン酸・ヒドロキサム酸など。
+    // **酸性の O-H/S-H** が第 1 候補。単なるアルコールを外してはいけない
+    // (I35 で判明)。コリン `C[N+](C)(C)CCO` の実 InChI は `C5H14NO/…/q+1` で、
+    // OH の H を保ったまま `/q` に残す。ここを「任意の O-H」にしていると
+    // `/p+1` になってしまう。
     //
-    // 単なるアルコールを外してはいけない (I35 で判明)。コリン
-    // `C[N+](C)(C)CCO` の実 InChI は `C5H14NO/…/q+1` で、OH の H を保ったまま
-    // `/q` に残す。ここを「任意の O-H」にしていると `/p+1` になってしまう。
+    // I36 では「隣の重原子が O/S へ二重結合を持つ」(カルボン酸・スルホン酸・
+    // リン酸型) に限っていたが、実 InChI はフェノール・エノール・ヒドロキサム酸の
+    // N-O-H からも外す。糖・アルコールとの境界は「**飽和炭素に付いた O-H か
+    // どうか**」— 芳香族炭素 (フェノール)、二重結合を持つ炭素 (エノール)、
+    // 炭素ですらない相手 (N-OH) はいずれも酸性側に入る (I38)。
+    //
+    // ```text
+    // smi  CN1CCC2=CC(=…)…[N+](CCC…)(C)C…   ← 四級 N+ + カテコール
+    // want …/h6-11,18-21,28-29H,…,(H-,40,41)/p+1   ← フェノールから外す
+    // ```
     let is_acidic_oh = |i: usize| -> bool {
         g.adjacency[i].iter().any(|&c| {
-            matches!(g.atoms[c].symbol.as_str(), "C" | "N" | "S" | "P")
-                && g.bonds.iter().enumerate().any(|(bi, b)| {
-                    (b.begin_idx == c || b.end_idx == c)
-                        && g.kekule_bond_orders[bi] == 2.0
-                        && matches!(
-                            g.atoms[if b.begin_idx == c {
-                                b.end_idx
-                            } else {
-                                b.begin_idx
-                            }]
-                            .symbol
-                            .as_str(),
-                            "O" | "S"
-                        )
+            let a = &g.atoms[c];
+            if a.symbol == "H" {
+                return false;
+            }
+            a.symbol != "C"
+                || a.is_aromatic
+                || g.bonds.iter().enumerate().any(|(bi, b)| {
+                    (b.begin_idx == c || b.end_idx == c) && g.kekule_bond_orders[bi] > 1.0
                 })
         })
     };
+    // 第 2 候補: **カルボニル型の可動 H 群** (アミド・イミド・尿素) の H。
+    // ニコチンアミド `C[N+]1=CC=CC(=C1)C(=O)N` の実 InChI は `(H-,8,10)/p+1` で、
+    // 一級アミドから外している。酸点らしい O-H が無くても四級 N+ は中和される。
+    //
+    // 「可動 H 群ならどれでも」にすると外し過ぎる。**塩基性の**アミン群 —
+    // アミノピリミジン (チアミン `CC1=C(SC=[N+]1CC2=CN=C(N=C2N)C)CCO` の実 InChI は
+    // `/q+1`)、アミジン、アミノチアゾール、グアニジン — は外さない。一級
+    // スルホンアミド `S(=O)(=O)N` も外さない。境界は「群に**炭素に付いた**
+    // O/S 端点があるか」で、これがカルボニル (C=O) を持つ群だけを選び出す
+    // (スルホンアミドの O は S に付いているので落ちる)。
+    //
+    // 併合後は群全体で 1 個の負電荷を共有するので、群内のどのメンバーを
+    // 選んでも結果は同じ。
+    let mut acidic_taut: Option<Vec<bool>> = None;
     for (c, left) in budget.iter_mut().enumerate().take(n_comps) {
         while *left > 0 {
+            let has_h = |i: usize| comp_of[i] == c && new_charge[i] == 0 && final_h[i] > 0;
             let pick = (0..n_heavy)
                 .filter(|&i| {
-                    comp_of[i] == c
-                        && new_charge[i] == 0
-                        && final_h[i] > 0
-                        && matches!(g.atoms[i].symbol.as_str(), "O" | "S")
-                        && is_acidic_oh(i)
+                    has_h(i) && matches!(g.atoms[i].symbol.as_str(), "O" | "S") && is_acidic_oh(i)
                 })
-                .min_by_key(|&i| (g.atoms[i].symbol != "O", i));
+                .min_by_key(|&i| (g.atoms[i].symbol != "O", i))
+                .or_else(|| {
+                    let tm = acidic_taut.get_or_insert_with(|| {
+                        let mut m = vec![false; n_heavy];
+                        for (eps, _, _) in super::number::mobile_groups(g) {
+                            let carbonyl = eps.iter().any(|&e| {
+                                matches!(g.atoms[e].symbol.as_str(), "O" | "S")
+                                    && g.adjacency[e].iter().any(|&c| g.atoms[c].symbol == "C")
+                            });
+                            if carbonyl {
+                                for e in eps {
+                                    m[e] = true;
+                                }
+                            }
+                        }
+                        m
+                    });
+                    (0..n_heavy).find(|&i| has_h(i) && tm[i])
+                });
             let Some(i) = pick else { break };
             final_h[i] -= 1;
             new_charge[i] = -1;

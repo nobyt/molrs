@@ -65,7 +65,9 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
             }
             // 可動群 (成分内のもの) を canonical 番号列に変換。可動 H 数 0 の
             // 群 (電荷分離ニトロ等、番号付けの等価化には使うが h 層には
-            // 出さない) は除外する。
+            // 出さない) は除外する。負電荷だけが残った群 (脱プロトン後の
+            // カルボキシラート) も同じ — `(H0-,…)` という表記は存在せず、
+            // カルニチンの実 InChI は h 層に何も出さない (I38)。
             let mut mobile: Vec<(u8, u8, Vec<usize>)> = all_groups
                 .iter()
                 .filter(|(eps, mh, _)| *mh > 0 && eps.iter().all(|&e| num[e] != 0))
@@ -462,5 +464,40 @@ mod tests {
         let g = build_molecule_graph("NC(CCCNC(N)=N)C(=O)O").unwrap();
         let h = crate::inchi::to_inchi(&g).unwrap();
         assert!(h.ends_with(",(H,11,12)(H4,8,9,10)"), "got: {h}");
+    }
+
+    /// I38: 中性化でプロトンが外れた成分は、可動 H 群が 1 つに併合され
+    /// 負電荷 (`-`) を共有する。共役で繋がっていない群どうしも併合される。
+    #[test]
+    fn mobile_charge_merges_groups() {
+        // チアミン三リン酸: アミノピリミジンの N 群と三リン酸の O 群が 1 群に
+        let smi = "CC1=C(SC=[N+]1CC2=CN=C(N=C2N)C)CCOP(=O)(O)OP(=O)(O)OP(=O)(O)O";
+        let h = crate::inchi::inchi_of(smi).unwrap();
+        assert!(
+            h.contains("(H5-,13,14,15,17,18,19,20,21,22,23)/p+1"),
+            "got: {h}"
+        );
+        // 単独の群しかなければ併合は no-op。可動 H 0 + 負電荷だけの群は
+        // h 層に出さない (カルニチンの実 InChI に `(H0-,…)` は付かない)。
+        let h = crate::inchi::inchi_of("C[N+](C)(C)CC(CC(=O)O)O").unwrap();
+        assert_eq!(
+            h,
+            "InChI=1S/C7H15NO3/c1-8(2,3)5-6(9)4-7(10)11/h6,9H,4-5H2,1-3H3/p+1"
+        );
+    }
+
+    /// I38: 脱プロトンの対象は酸性 O-H (フェノール等) とカルボニル型の
+    /// 可動 H 群 (アミド)。塩基性アミンと単なるアルコールは外さない。
+    #[test]
+    fn deprotonation_site_acidity() {
+        // 一級アミドから外して `(H-,8,10)/p+1`
+        let h = crate::inchi::inchi_of("C[N+]1=CC=CC(=C1)C(=O)N").unwrap();
+        assert!(h.contains("(H-,8,10)/p+1"), "got: {h}");
+        // コリンのアルコールは外さない (I36)
+        let h = crate::inchi::inchi_of("C[N+](C)(C)CCO").unwrap();
+        assert!(h.ends_with("/q+1"), "got: {h}");
+        // アミノチアゾリウムの塩基性 NH2 も外さない
+        let h = crate::inchi::inchi_of("CC1=C(SC=[N+]1CC2=CN=C(N=C2N)C)CCO").unwrap();
+        assert!(h.contains("(H2,13,14,15)/q+1"), "got: {h}");
     }
 }
