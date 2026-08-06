@@ -139,11 +139,15 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
     // できないが実 InChI は COOH から 1 個外した双性イオンを基準にして
     // `C7H15NO3/…/p+1` を出す。外さないと `/q+1` になってしまう。
     //
-    // 酸性度の高い順に外す: カルボン酸型 (隣の C が =O/=S を持つ O-H) →
-    // その他の O-H → S-H。同種なら番号の小さい方から。
-    let is_acyl_oxygen = |i: usize| -> bool {
+    // **酸性の O-H/S-H だけ**が対象。隣の重原子 (C/N/S/P) が O/S へ二重結合を
+    // 持つもの — カルボン酸・スルホン酸・リン酸・ヒドロキサム酸など。
+    //
+    // 単なるアルコールを外してはいけない (I35 で判明)。コリン
+    // `C[N+](C)(C)CCO` の実 InChI は `C5H14NO/…/q+1` で、OH の H を保ったまま
+    // `/q` に残す。ここを「任意の O-H」にしていると `/p+1` になってしまう。
+    let is_acidic_oh = |i: usize| -> bool {
         g.adjacency[i].iter().any(|&c| {
-            g.atoms[c].symbol == "C"
+            matches!(g.atoms[c].symbol.as_str(), "C" | "N" | "S" | "P")
                 && g.bonds.iter().enumerate().any(|(bi, b)| {
                     (b.begin_idx == c || b.end_idx == c)
                         && g.kekule_bond_orders[bi] == 2.0
@@ -168,8 +172,9 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
                         && new_charge[i] == 0
                         && final_h[i] > 0
                         && matches!(g.atoms[i].symbol.as_str(), "O" | "S")
+                        && is_acidic_oh(i)
                 })
-                .min_by_key(|&i| (!is_acyl_oxygen(i), g.atoms[i].symbol != "O", i));
+                .min_by_key(|&i| (g.atoms[i].symbol != "O", i));
             let Some(i) = pick else { break };
             final_h[i] -= 1;
             new_charge[i] = -1;
