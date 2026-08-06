@@ -144,14 +144,25 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
         .map(|c| stereo::tetrahedral_layers(g, c))
         .collect();
     let t = join_components(&pad(tms.iter().map(|x| x.0.clone()).collect()));
-    let m = join_components(&pad(tms
+    // /m は成分ごとの値を **`.` で連結**する (`;` ではない、I32)。立体中心の
+    // 無い成分は空欄になるので、実 InChI では `/m0.` (2 成分で 1 つ目だけ)、
+    // `/m0....` (5 成分)、`/m.1` (2 つ目だけ) のように見える。
+    let m_parts = pad(tms
         .iter()
         .map(|x| x.1.map(String::from).unwrap_or_default())
-        .collect()));
-    let s_char = join_components(&pad(tms
+        .collect());
+    let m = if m_parts.iter().all(|s| s.is_empty()) {
+        String::new()
+    } else {
+        m_parts.join(".")
+    };
+    // /s は**構造全体で 1 個**であって成分ごとではない (コーパス 2,115 件すべて
+    // `/s1`)。従来は成分ごとに並べて `/s1;` のようにしていた。
+    let s_char = tms
         .iter()
-        .map(|x| x.2.map(String::from).unwrap_or_default())
-        .collect()));
+        .find_map(|x| x.2)
+        .map(String::from)
+        .unwrap_or_default();
 
     let mut out = format!("InChI=1S/{formula}");
     if !c.is_empty() {

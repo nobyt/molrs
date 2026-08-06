@@ -29,6 +29,7 @@ fn ez_neighbors(g: &MoleculeGraph, end: usize, other: usize) -> Vec<usize> {
 /// `/b` 層 (先頭の `b` は含めない)。空なら空文字列。
 pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
     let ranks = cip_ranks(g);
+    let tgroup = super::number::tautomer_group_members(g);
     let mut entries: Vec<(usize, usize, char)> = Vec::new();
 
     for b in &g.bonds {
@@ -37,6 +38,14 @@ pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
         // 成分内かつ番号付け済み
         if comp.num.get(a).copied().unwrap_or(0) == 0 || comp.num.get(c).copied().unwrap_or(0) == 0
         {
+            continue;
+        }
+        // 可動 H 群のメンバーを端点に持つ二重結合 (アミジン/グアニジンの C=N
+        // 等) は、二重結合の位置自体が互変異性で動くので E/Z を持たない
+        // (I32)。従来この除外は未定義 (`?`) 側にしか掛かっておらず、SMILES で
+        // `/N=C(\c1ccccc1)/N` のように**構成が明示されていても** `/b` に出して
+        // しまっていた。実 InChI はこの結合を `/b` に載せない。
+        if tgroup[a] || tgroup[c] {
             continue;
         }
         let na = ez_neighbors(g, a, c);
@@ -66,9 +75,6 @@ pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
     if !entries.is_empty() {
         let listed: std::collections::HashSet<(usize, usize)> =
             entries.iter().map(|&(hi, lo, _)| (hi, lo)).collect();
-        // 可動 H 群のメンバーを端点に持つ二重結合 (アミジン/グアニジンの
-        // C=N 等) は、二重結合の位置自体が互変異性で動くため対象外。
-        let tgroup = super::number::tautomer_group_members(g);
         for (bi, b) in g.bonds.iter().enumerate() {
             if b.stereo.is_some() || g.kekule_bond_orders[bi] != 2.0 {
                 continue;

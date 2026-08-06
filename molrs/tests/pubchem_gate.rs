@@ -72,7 +72,8 @@ fn pubchem_full_inchi() {
     let acc = ok as f64 / n.max(1) as f64;
     println!("pubchem full InChI: {ok}/{n} exact ({:.2}%)", acc * 100.0);
     // I29 94.66% → I30 96.97% (未定義四面体中心 `?` + 第四級中心のパリティ)
-    //            → I31 97.05% (成分単位の電荷中性化)。
+    //            → I31 97.05% (成分単位の電荷中性化)
+    //            → I32 97.80% (可動 H 群にかかる /b の除外、/m の `.` 連結)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.970, "pubchem InChI accuracy {acc:.4} < 0.970");
+    assert!(acc >= 0.977, "pubchem InChI accuracy {acc:.4} < 0.977");
 }

@@ -18,8 +18,8 @@ pub(crate) struct Component {
     pub adj: Vec<Vec<usize>>,
     /// canonical 番号 → 固定 H 数
     pub fixed_h: Vec<u8>,
-    /// 可動 H 群: (mobile H 数, [canonical 番号...])
-    pub mobile: Vec<(u8, Vec<usize>)>,
+    /// 可動 H 群: (mobile H 数, 負電荷数, [canonical 番号...])
+    pub mobile: Vec<(u8, u8, Vec<usize>)>,
 }
 
 /// 分子を成分ごとに正準情報へ分解する。
@@ -66,20 +66,20 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
             // 可動群 (成分内のもの) を canonical 番号列に変換。可動 H 数 0 の
             // 群 (電荷分離ニトロ等、番号付けの等価化には使うが h 層には
             // 出さない) は除外する。
-            let mut mobile: Vec<(u8, Vec<usize>)> = all_groups
+            let mut mobile: Vec<(u8, u8, Vec<usize>)> = all_groups
                 .iter()
-                .filter(|(eps, mh)| *mh > 0 && eps.iter().all(|&e| num[e] != 0))
-                .map(|(eps, mh)| {
+                .filter(|(eps, mh, _)| *mh > 0 && eps.iter().all(|&e| num[e] != 0))
+                .map(|(eps, mh, neg)| {
                     let mut nums: Vec<usize> = eps.iter().map(|&e| num[e]).collect();
                     nums.sort_unstable();
-                    (*mh, nums)
+                    (*mh, *neg, nums)
                 })
                 .collect();
             // 出力順: 群のメンバー数 (端点原子数) 昇順、同数なら最小 canonical
             // 番号昇順 (I19 §3.5、実 InChI で確認: 小さい群が先に来る。
             // 例: アルギニンは (H,11,12) [2 端点] が (H4,8,9,10) [3 端点] より
             // 先)。
-            mobile.sort_by_key(|(_, nums)| (nums.len(), nums[0]));
+            mobile.sort_by_key(|(_, _, nums)| (nums.len(), nums[0]));
 
             Component {
                 inv: inv.clone(),
@@ -264,17 +264,22 @@ pub(crate) fn hydrogen_layer(comp: &Component) -> String {
     let fixed = parts.join(",");
     // 可動群はカンマなしで連結 ((H,5,6)(H,7,8))。固定部との間にはカンマ。
     let mut mobile = String::new();
-    for (mh, nums) in &comp.mobile {
+    for (mh, neg, nums) in &comp.mobile {
         let list = nums
             .iter()
             .map(|x| x.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        if *mh == 1 {
-            mobile.push_str(&format!("(H,{list})"));
+        // `H` + (2 以上なら個数) + (負電荷があれば `-`)。実 InChI の
+        // `(H-,10,11,12)` は「可動 H 1 個 + 負電荷 1」、`(H3-,…)` は
+        // 「可動 H 3 個 + 負電荷 1」(I32)。
+        let count = if *mh == 1 {
+            String::new()
         } else {
-            mobile.push_str(&format!("(H{mh},{list})"));
-        }
+            mh.to_string()
+        };
+        let charge = "-".repeat(*neg as usize);
+        mobile.push_str(&format!("(H{count}{charge},{list})"));
     }
     match (fixed.is_empty(), mobile.is_empty()) {
         (false, false) => format!("{fixed},{mobile}"),

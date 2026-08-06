@@ -95,34 +95,17 @@ fn n_h_of(g: &MoleculeGraph, i: usize) -> usize {
 /// 3 つの O を 1 群とし可動 H = 1 だが、その 1 は O-H 由来で O- 由来ではない)
 /// が、可動 H 数には数えない。
 fn is_locked_zwitterion_neg(g: &MoleculeGraph, atom: usize) -> bool {
-    if g.atoms[atom].formal_charge >= 0 {
-        return false;
-    }
-    // 同じ成分のどこかに陽電荷があれば、この負電荷は「対になって固定されて
-    // いる」ので可動プロトンとして数えない (I31)。
+    // 隣に陽電荷がある電荷分離 (ニトロ・N-オキシド・アジド) の O-/N- は、
+    // 共有結合の中性形の書き換えに過ぎないので群の負電荷として数えない。
     //
-    // 電荷正規化 ([`super::normalize::neutralize`]) は成分の**正味電荷**を 0 に
-    // するので、正規化後も残る負電荷は必ず成分内の陽電荷と釣り合っている。
-    // ニトロ・N-オキシドのような隣接した電荷分離だけでなく、アセチルカル
-    // ニチン `CC(=O)OC(CC(=O)[O-])C[N+](C)(C)C` のように四級 N+ が遠くに
-    // ある分子内塩も対象 — 実 InChI はこのカルボキシラートに可動 H 群
-    // `(H,12,13)` を作らない (H が乗っていないので当然)。隣接だけを見て
-    // いると遠い対イオンを見逃していた。
-    let mut seen = vec![false; g.atoms.len()];
-    let mut stack = vec![atom];
-    seen[atom] = true;
-    while let Some(a) = stack.pop() {
-        if g.atoms[a].symbol != "H" && g.atoms[a].formal_charge > 0 {
-            return true;
-        }
-        for &nb in &g.adjacency[a] {
-            if !seen[nb] {
-                seen[nb] = true;
-                stack.push(nb);
-            }
-        }
-    }
-    false
+    // I31 では「同じ成分のどこかに陽電荷」まで広げていたが、I32 で群の電荷を
+    // 可動 H 数に足さず `-` サフィックスとして別に持つようにしたため、
+    // 遠くの対イオン (分子内塩のカルボキシラート) は逆に `-` として
+    // 出力する必要がある。隣接限定に戻す。
+    g.atoms[atom].formal_charge < 0
+        && g.adjacency[atom]
+            .iter()
+            .any(|&nb| g.atoms[nb].symbol != "H" && g.atoms[nb].formal_charge > 0)
 }
 
 /// Kekule 化済みの結合次数 (芳香族結合も 1/2 の実値。`g.bond_orders` は
@@ -856,7 +839,7 @@ enum Shift {
     More,
 }
 
-pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
+pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
     let n = g.atoms.len();
     let kekule = kekule_order_map(g);
     // I19 §3.4: 橋頭ヘテロ原子を含む環 (とその融合相手の環) は、複数原子を
@@ -1182,7 +1165,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
     }
     cands.sort();
     let allowed = hub_allowed_endpoints(g, &cands);
-    let mut groups: Vec<(Vec<usize>, u8)> = Vec::new();
+    let mut groups: Vec<(Vec<usize>, u8, u8)> = Vec::new();
     {
         for (gi, cand) in cands.iter().enumerate() {
             let grp: Vec<usize> = cand
@@ -1204,19 +1187,20 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
             if total_h + raw_neg == 0 {
                 continue;
             }
-            // 可動 H 数: 電荷分離 (zwitterion) で固定された負電荷 (ニトロ・
-            // N-オキシドの O-) は可動プロトンとして数えない (実 InChI 準拠、
-            // is_locked_zwitterion_neg)。可動数が 0 になっても群自体は残す —
-            // メンバーは正準番号付けで等価化される (ニトロの 2 つの O は
-            // 対称) が、h 層には出力されない (可動 H がないため)。
-            let unlocked_neg = grp
+            // 群の負電荷は**可動 H 数に足さず**、`(H-,…)` の `-` サフィックス
+            // として別に持つ (I32)。実 InChI の `(H-,10,11,12)` は「可動 H 1 個
+            // ＋ 負電荷 1」であって「可動 H 2 個」ではない。
+            //
+            // 電荷分離 (ニトロ・N-オキシドの O-、隣に陽電荷がある) は群の電荷
+            // としても数えない (is_locked_zwitterion_neg)。
+            let neg = grp
                 .iter()
                 .filter(|&&e| g.atoms[e].formal_charge < 0 && !is_locked_zwitterion_neg(g, e))
                 .count();
-            groups.push((grp, (total_h + unlocked_neg) as u8));
+            groups.push((grp, total_h as u8, neg as u8));
         }
     }
-    groups.sort_by_key(|(m, _)| m[0]);
+    groups.sort_by_key(|(m, _, _)| m[0]);
     groups
 }
 
@@ -1224,7 +1208,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8)> {
 pub(crate) fn tautomer_group_members(g: &MoleculeGraph) -> Vec<bool> {
     let n = g.atoms.len();
     let mut member = vec![false; n];
-    for (eps, _) in mobile_groups(g) {
+    for (eps, _, _) in mobile_groups(g) {
         for e in eps {
             member[e] = true;
         }
@@ -1915,7 +1899,7 @@ mod tests {
         let g = build_molecule_graph("Oc1cc2[nH]ncc2cn1").unwrap();
         let groups = mobile_groups(&g);
         assert_eq!(groups.len(), 2);
-        let mut sizes: Vec<usize> = groups.iter().map(|(m, _)| m.len()).collect();
+        let mut sizes: Vec<usize> = groups.iter().map(|(m, _, _)| m.len()).collect();
         sizes.sort_unstable();
         assert_eq!(sizes, vec![2, 2]);
 
@@ -1977,7 +1961,7 @@ mod tests {
         // 前者が作れず OH が固定されていた。
         let g = build_molecule_graph("[H]Oc1cc2c[nH]nc2nn1").unwrap();
         let groups = mobile_groups(&g);
-        assert_eq!(groups, vec![(vec![0, 9], 1), (vec![5, 6, 8], 1)]);
+        assert_eq!(groups, vec![(vec![0, 9], 1, 0), (vec![5, 6, 8], 1, 0)]);
 
         // 対照 (同じ 6-5 縮環でも縮環結合が単結合で書かれる型): こちらは
         // 環外 OH が固定されたままでなければならない。局所パターンは同一で、
