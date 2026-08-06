@@ -318,6 +318,99 @@ fn compress_ranges(nums: &[usize]) -> String {
     out.join(",")
 }
 
+/// 同位体層 `/i` の本体 (先頭の `i` は含めない)。空なら空文字列 (I37)。
+///
+/// 2 種類のエントリを正準番号の昇順で `,` 区切りに並べる:
+///
+/// - **重原子そのものが同位体**: `{番号}{+|-}{標準質量数との差}` (`4+1` = 13C)
+/// - **同位体水素が付いている**: `{番号}T{個数}D{個数}` (`5T2`、`12D2`、`1TD`)。
+///   個数 1 は省略。T (三重水素) を D より先に書く。
+///
+/// 同位体情報は `AtomInfo` に無く、SMILES パース結果 (`g.parsed`) にしか
+/// 無いので `parser_to_graph` を逆引きして辿る。`[2H]`/`[3H]` は同位体付き
+/// なので `build_molecule_graph` の H マージ対象外で、原子ノードとして残る
+/// (このため電荷正規化も走らず、添字はそのまま使える)。
+pub(crate) fn isotope_layer(g: &MoleculeGraph, comp: &Component) -> String {
+    // グラフ原子 idx → パーサ原子 idx
+    let mut to_parsed = vec![usize::MAX; g.atoms.len()];
+    for (pi, gi) in g.parser_to_graph.iter().enumerate() {
+        if let Some(gi) = gi {
+            if *gi < to_parsed.len() {
+                to_parsed[*gi] = pi;
+            }
+        }
+    }
+    let isotope_of = |gi: usize| -> Option<u16> {
+        let pi = *to_parsed.get(gi)?;
+        g.parsed.atoms.get(pi)?.isotope
+    };
+
+    let mut entries: Vec<(usize, String)> = Vec::new();
+    for (ci, &orig) in comp.inv.iter().enumerate() {
+        let canon = ci + 1;
+        // 1) 重原子自身の同位体 (標準質量数との差)
+        if let (Some(iso), Some(std)) = (isotope_of(orig), standard_mass(&g.atoms[orig].symbol)) {
+            let delta = iso as i32 - std as i32;
+            if delta != 0 {
+                entries.push((canon, format!("{canon}{delta:+}")));
+            }
+        }
+        // 2) 付いている同位体水素 (D = 2H, T = 3H)
+        let (mut d, mut t) = (0usize, 0usize);
+        for &nb in &g.adjacency[orig] {
+            if g.atoms[nb].symbol != "H" {
+                continue;
+            }
+            match isotope_of(nb) {
+                Some(2) => d += 1,
+                Some(3) => t += 1,
+                _ => {}
+            }
+        }
+        if d > 0 || t > 0 {
+            let mut spec = format!("{canon}");
+            let mut push = |sym: char, n: usize| {
+                if n > 0 {
+                    spec.push(sym);
+                    if n > 1 {
+                        spec.push_str(&n.to_string());
+                    }
+                }
+            };
+            push('T', t);
+            push('D', d);
+            entries.push((canon, spec));
+        }
+    }
+    entries.sort_by_key(|&(c, _)| c);
+    entries
+        .into_iter()
+        .map(|(_, s)| s)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// InChI が同位体差の基準に使う質量数 (最も存在比の高い同位体)。
+fn standard_mass(sym: &str) -> Option<u16> {
+    Some(match sym {
+        "H" => 1,
+        "B" => 11,
+        "C" => 12,
+        "N" => 14,
+        "O" => 16,
+        "F" => 19,
+        "Si" => 28,
+        "P" => 31,
+        "S" => 32,
+        "Cl" => 35,
+        "As" => 75,
+        "Se" => 80,
+        "Br" => 79,
+        "I" => 127,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

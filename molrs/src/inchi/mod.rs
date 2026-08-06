@@ -3,8 +3,8 @@
 //! IUPAC 公式 InChI (C 実装) とビット完全一致を目標とする。計画:
 //! RUST_INCHI_PLAN.md。
 //!
-//! v1 の対象: 骨格層 (式・接続 `c`・水素 `h`・電荷 `q`/`p`) と InChIKey。
-//! 立体 (`b`/`t`/`m`/`s`)・同位体 (`i`)・一般の互変異性正規化は未対応。
+//! 対象: 骨格層 (式・接続 `c`・水素 `h`・電荷 `q`/`p`)、立体 (`b`/`t`/`m`/`s`)、
+//! 同位体 (`i`)、InChIKey。一般の互変異性正規化 (可動電荷) は未対応。
 //!
 //! InChIKey は標準 InChI 文字列の SHA-256 ハッシュ (base-26 符号化) なので、
 //! 依存クレートゼロを保つため SHA-256 を自前実装している ([`sha256`])。
@@ -89,8 +89,8 @@ fn join_components(parts: &[String]) -> String {
 /// 標準 InChI (`InChI=1S/…`) を生成する。
 ///
 /// 電荷は q/p 層で中性化して扱う。金属結合は標準 InChI の規約どおり切断し
-/// (I20、[`disconnect`])、多成分は `;` 区切りで直列化する。同位体 (`i`) と
-/// 多中心の環互変異性の一部は未対応。
+/// (I20、[`disconnect`])、多成分は `;` 区切りで直列化する。多中心の環互変異性の
+/// 一部と、酸点をまたぐ可動電荷は未対応。
 pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     // 金属結合の切断 (標準 InChI は disconnected-metal 表現) → 電荷正規化
     let dg = disconnect::disconnect_metals(g);
@@ -197,6 +197,15 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     if !s_char.is_empty() {
         out.push_str("/s");
         out.push_str(&s_char);
+    }
+    // 同位体層 (立体層の後、I37)
+    let iso = join_components(&pad(comps
+        .iter()
+        .map(|c| layers::isotope_layer(g, c))
+        .collect()));
+    if !iso.is_empty() {
+        out.push_str("/i");
+        out.push_str(&iso);
     }
     Ok(out)
 }
