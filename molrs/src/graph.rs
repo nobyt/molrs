@@ -85,7 +85,12 @@ pub(crate) fn default_valences(symbol: &str) -> &'static [u8] {
         "O" => &[2],
         "P" => &[3, 5],
         "S" => &[2, 4, 6],
-        "F" | "Cl" | "Br" | "I" => &[1],
+        // Cl/Br/I は超原子価を取る (過塩素酸 `Cl(=O)(=O)(=O)O` = 7、
+        // 超原子価ヨウ素 = 3)。RDKit の既定原子価表も 1,3,5,7 で、molrs だけが
+        // 1 に限っていたため正当な SMILES を `Invalid SMILES` で弾いていた
+        // (I35)。F は 1 のみ。
+        "F" => &[1],
+        "Cl" | "Br" | "I" => &[1, 3, 5, 7],
         _ => unreachable!("implicit H is only computed for organic-subset atoms"),
     }
 }
