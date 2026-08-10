@@ -543,13 +543,17 @@ fn seed_groups(
             continue;
         }
         // O/S 端点だけで酸系 (二重 O/S ≥1 かつ 供与体 O/S ≥1) を成すなら、
-        // N を除外して酸のみを群とする。ただし例外として、末端の一級 NH2
-        // (heavy_deg == 1) は、中心が炭素で酸対が純粋に酸素だけ (カルバミン
-        // 酸型、アミド性の N は非可動) でない限り除外しない — ジチオ
-        // カルバミン酸 `NC(=S)S` (酸対に S を含む) やスルファミン酸
-        // `NS(=O)(=O)O` (中心が S) の NH2 は酸対と一緒に可動になるが、
-        // 通常のカルバミン酸 `NC(=O)O` (中心が C、酸対が O,O のみ) の NH2
-        // はアミド性のまま固定される (I19 §3.2/§3.3、実 InChI で確認)。
+        // N を除外して酸のみを群とする。ただし例外として、酸対が O だけの
+        // 純粋なカルバミン酸型 (中心が炭素で酸対が O,O のみ、アミド性の N は
+        // 非可動) でない限り N は除外しない — ジチオカルバミン酸
+        // `NC(=S)S` (酸対に S を含む) やスルファミン酸 `NS(=O)(=O)O`
+        // (中心が S) の N は酸対と一緒に可動になり、これは N が末端 NH2 か
+        // 二級 NHR かによらない (I19 §3.2/§3.3 では末端 NH2 の実測しか
+        // なかったため heavy_deg==1 を要求していたが、PubChem 実データでは
+        // 二級 N-アルキルのジチオカルバミン酸・チオカルバミン酸も同様に
+        // 可動と確認できたため撤廃、I39)。通常のカルバミン酸
+        // `NC(=O)O` (中心が C、酸対が O,O のみ) の N はアミド性のまま
+        // 固定される。
         let os_ep: Vec<usize> = endpoints
             .iter()
             .copied()
@@ -563,18 +567,17 @@ fn seed_groups(
             .any(|&e| n_h_of(g, e) >= 1 || g.atoms[e].formal_charge < 0);
         let carbamic_acid_like =
             g.atoms[center].symbol == "C" && os_ep.iter().all(|&e| g.atoms[e].symbol == "O");
-        let is_primary_n =
-            |e: usize| g.atoms[e].symbol == "N" && heavy_deg(e) == 1 && !carbamic_acid_like;
+        let is_retained_n = |e: usize| g.atoms[e].symbol == "N" && !carbamic_acid_like;
         let chosen: Vec<usize> = if os_double && os_donor && os_ep.len() >= 2 {
             for &e in &endpoints {
-                if !os_ep.contains(&e) && !is_primary_n(e) {
+                if !os_ep.contains(&e) && !is_retained_n(e) {
                     excluded.insert(e);
                 }
             }
             endpoints
                 .iter()
                 .copied()
-                .filter(|&e| os_ep.contains(&e) || is_primary_n(e))
+                .filter(|&e| os_ep.contains(&e) || is_retained_n(e))
                 .collect()
         } else {
             endpoints

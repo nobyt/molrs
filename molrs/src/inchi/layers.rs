@@ -500,4 +500,22 @@ mod tests {
         let h = crate::inchi::inchi_of("CC1=C(SC=[N+]1CC2=CN=C(N=C2N)C)CCO").unwrap();
         assert!(h.contains("(H2,13,14,15)/q+1"), "got: {h}");
     }
+
+    /// I39: 酸対 (中心に二重結合 O/S ≥1 かつ 供与体 O/S ≥1) に **S を含む**
+    /// 場合、N 端点は末端 NH2 (heavy_deg==1) に限らず二級 NHR も可動群に
+    /// 含める。ジチオカルバミン酸型 `R-NH-C(=S)-S-`、チオカルバミン酸型
+    /// `R-NH-C(=O)-S-H` はどちらも N が二級でも実 InChI は N を可動群に
+    /// 含める — 通常のカルバミン酸 (酸対が O,O のみ) の N はアミド性の
+    /// まま固定されるのと対照的 (PubChem 実データで確認)。
+    #[test]
+    fn secondary_n_joins_thio_acid_pair() {
+        let h = crate::inchi::inchi_of("CNC(=S)[S-]").unwrap();
+        assert!(h.contains("(H2,3,4,5)/p-1"), "got: {h}");
+        let h = crate::inchi::inchi_of("CNC(=O)S").unwrap();
+        assert!(h.contains("(H2,3,4,5)"), "got: {h}");
+        // 対照: 酸対が O,O のみ (通常のカルバミン酸) なら N は固定のまま
+        let h = crate::inchi::inchi_of("CNC(=O)O").unwrap();
+        assert!(h.contains("(H,4,5)"), "got: {h}");
+        assert!(!h.contains(",3,4,5)"), "N should stay fixed: {h}");
+    }
 }

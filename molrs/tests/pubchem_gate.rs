@@ -79,7 +79,8 @@ fn pubchem_full_inchi() {
     //            → I35 98.28% (超原子価ハロゲンの原子価表)
     //            → I36 98.35% (脱プロトンを酸性 O-H に限定)
     //            → I37 98.44% (同位体層 /i)
-    //            → I38 98.70% (可動電荷: 荷電可動 H 群の併合と酸点の拡大)。
+    //            → I38 98.70% (可動電荷: 荷電可動 H 群の併合と酸点の拡大)
+    //            → I39 98.71% (酸対に S を含む場合の N 端点、primary 限定を撤廃)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9869, "pubchem InChI accuracy {acc:.4} < 0.9869");
+    assert!(acc >= 0.987, "pubchem InChI accuracy {acc:.4} < 0.987");
 }
