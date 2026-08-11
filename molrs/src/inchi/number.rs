@@ -508,10 +508,16 @@ fn seed_groups(
             // 高酸化状態のヘテロ原子であることを示す二重結合 O の数が
             // 十分なとき: S は 2 個 (スルホンアミド、スルフィンアミドは
             // 1 個で非可動) だが、P はリン酸トリアミド等で 1 個の P=O
-            // でも一級アミドが可動になる (I19 §3.1)。
+            // でも一級アミドが可動になる (I19 §3.1)。中心が P のときは
+            // 二級 N (ホスホルアミド酸型 R-NH-P(=O)) も同様に可動 (I42、
+            // PubChem 実データで確認) — I39 でジチオカルバミン酸の N の
+            // primary 限定を撤廃したのと同じ理由で、P 中心も heavy_deg を
+            // 問わない。S 中心は実測例がまだなく一級 (heavy_deg==1) 限定の
+            // ままにする。
             let center_sym = g.atoms[center].symbol.as_str();
             let n_double_o_ok = n_double_o >= 2 || (center_sym == "P" && n_double_o >= 1);
-            if sym == "N" && !center_is_c_or_n(center) && !(heavy_deg(nb) == 1 && n_double_o_ok) {
+            let n_deg_ok = heavy_deg(nb) == 1 || center_sym == "P";
+            if sym == "N" && !center_is_c_or_n(center) && !(n_deg_ok && n_double_o_ok) {
                 continue;
             }
             let bond_from_center_is_double = kekule
@@ -1091,6 +1097,54 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
         for &m in grp {
             members.insert(m);
             roots.push(m);
+        }
+    }
+    // I42: ビニロガスなアミジン-カルボニル型互変異性の橋渡し (クレアチニン型
+    // O=C-N=C-NH2: 環状/非環状いずれも)。`seed_groups` は 1 中心の直接隣接
+    // 端点しか見ないため、中心炭素 (カルボニル C) の単結合隣接ヘテロ原子が
+    // それ自身 H を持たず (ゆえに供与体端点になれず)、かつ中心との結合も
+    // 単結合 (ゆえに受容体端点にもなれない) 場合、その隣接ヘテロ原子は
+    // どの種にも入らない。しかしその原子が「別の実二重結合」(アミジン C=N
+    // 等) を持っているなら、その二重結合を手放して中心側に二重結合を渡す
+    // 経路が Kekule 構造として有効であり、実 InChI はこれを 1 つの互変異性
+    // 群として扱う。中心炭素の受容体端点 (A) とこの橋渡しヘテロ原子 (bridge)
+    // を直接 union する — bridge は既に別の種 (アミジン等) を通じてその
+    // ドナー端点と union 済みなので、これで両方の群が 1 つに合流する。
+    //
+    // 「中心炭素が実ヘテロ二重結合を持つ」「橋渡し原子が別の実二重結合を
+    // 持つ」の両条件を課すことで、単なるエーテル・エステルの酸素 (自身の
+    // 二重結合を持たない) や無関係な遠方の供与体 (ニトロ基等、中心炭素の
+    // 直接隣接ではあるが自身の実二重結合を持たない) を巻き込まない —
+    // どちらも「橋渡し原子が別の実二重結合を持つ」の条件で弾かれる。
+    for b in &g.bonds {
+        let (p, q) = (b.begin_idx, b.end_idx);
+        if g.atoms[p].symbol == "H" || g.atoms[q].symbol == "H" {
+            continue;
+        }
+        if kekule.get(&(p.min(q), p.max(q))).copied().unwrap_or(1.0) != 1.0 {
+            continue;
+        }
+        for &(hub, bridge) in &[(p, q), (q, p)] {
+            if g.atoms[hub].symbol != "C" || !is_hetero(g.atoms[bridge].symbol.as_str()) {
+                continue;
+            }
+            if !has_own_double(g, &kekule, bridge) {
+                continue;
+            }
+            let accept = g.adjacency[hub].iter().copied().find(|&nb| {
+                nb != bridge
+                    && is_hetero(g.atoms[nb].symbol.as_str())
+                    && kekule.get(&(hub.min(nb), hub.max(nb))).copied().unwrap_or(1.0) == 2.0
+            });
+            let Some(a) = accept else { continue };
+            if poisoned.contains(&a) || poisoned.contains(&bridge) {
+                continue;
+            }
+            uf.union(a, bridge);
+            members.insert(a);
+            members.insert(bridge);
+            roots.push(a);
+            roots.push(bridge);
         }
     }
     // 孤立供与体 (どの中心の候補にもならなかった H/負電荷ヘテロ原子、例:
