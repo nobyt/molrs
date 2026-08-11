@@ -145,9 +145,13 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
         .map(|c| stereo::tetrahedral_layers(g, c))
         .collect();
     let t = join_components(&pad(tms.iter().map(|x| x.0.clone()).collect()));
-    // /m は成分ごとの値を **`.` で連結**する (`;` ではない、I32)。立体中心の
-    // 無い成分は空欄になるので、実 InChI では `/m0.` (2 成分で 1 つ目だけ)、
-    // `/m0....` (5 成分)、`/m.1` (2 つ目だけ) のように見える。
+    // /m は成分ごとの値を**区切り無しで連結**する (`;` でも、成分ごとに
+    // `.` で区切るのでもない、I43)。立体中心の無い成分だけ `.` を
+    // プレースホルダとして置く — 定義済みの値どうしは隣り合っても区切りを
+    // 挟まない。例: 5 成分中 1〜5 番目が全て定義済みなら `/m01010`、末尾
+    // 2 成分が未定義なら `/m11111..`、1 番目が未定義・2〜3 番目が定義済み
+    // なら `/m.10` のようになる (以前は `join(".")` で定義済みどうしの間にも
+    // 余計な `.` が挟まっていた)。
     let m_parts = pad(tms
         .iter()
         .map(|x| x.1.map(String::from).unwrap_or_default())
@@ -155,7 +159,10 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     let m = if m_parts.iter().all(|s| s.is_empty()) {
         String::new()
     } else {
-        m_parts.join(".")
+        m_parts
+            .iter()
+            .map(|s| if s.is_empty() { "." } else { s.as_str() })
+            .collect::<String>()
     };
     // /s は**構造全体で 1 個**であって成分ごとではない (コーパス 2,115 件すべて
     // `/s1`)。従来は成分ごとに並べて `/s1;` のようにしていた。

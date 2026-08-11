@@ -256,7 +256,21 @@ fn is_undefined_tetra(
     let lone_pair_center = heavy.len() == 3 && n_h == 0;
     let ok_elem = match a.symbol.as_str() {
         "C" | "Si" | "Ge" | "Sn" => !lone_pair_center,
-        "P" | "As" => lone_pair_center,
+        // P(V)/As(V) (ホスホン酸エステル・ホスホルアミド酸型: 重原子 4 個、
+        // うち 1 個が実二重結合 =O でも四面体幾何のまま、カルボニル炭素の
+        // ような平面 sp2 にはならない) も四面体源性になりうる (I43)。
+        // ただし置換基のどれかが電荷を持つ (ホスホン酸/ホスファートの
+        // 脱プロトン化アニオン `P(=O)(O)[O-]` 等) 場合は除外する — この
+        // =O と -O⁻ は共鳴で等価 (カルボン酸の 2 個の O が常に等価なのと
+        // 同じ) だが、`colors` 側の初期キーが `formal_charge` を含むため
+        // 区別されてしまい、実際には立体源性でない中心を誤って `?` に
+        // してしまう (共鳴等価性まで考慮した色付けは別途必要、未実装)。
+        "P" | "As" => {
+            lone_pair_center
+                || (heavy.len() == 4
+                    && n_h == 0
+                    && heavy.iter().all(|&nb| g.atoms[nb].formal_charge == 0))
+        }
         // S/Se は原子価 4 (スルホキシド) か、原子価 3 のカチオン
         "S" | "Se" => {
             if lone_pair_center {
