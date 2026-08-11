@@ -294,21 +294,41 @@ fn is_undefined_tetra(
 
 /// 正準番号空間の色 (自己同型が保たなければならない原子の不変量) を
 /// 1-WL 精緻化で求める。返り値は 1-indexed (添字 0 は未使用)。
+///
+/// [`is_achiral`] の対称性探索が使う場合は、鏡像自己同型 (全パリティ反転)
+/// を見つける必要があるため色に既知の立体を含めてはいけない
+/// ([`refined_colors`] を直接呼ぶ)。
 fn refined_colors(g: &MoleculeGraph, comp: &Component) -> Vec<usize> {
+    refined_colors_seeded(g, comp, |_| String::new())
+}
+
+/// [`refined_colors`] と同じ 1-WL 精緻化だが、初期色に追加の鍵
+/// (`extra_key`) を混ぜる。[`is_undefined_tetra`] は既に配置が定まった
+/// 中心を区別に使いたい (トポロジーだけでは対称な 2 つの環分岐が、
+/// 一方にだけ定義済み立体中心があるために実際には区別できるケースを
+/// 拾うため) ので、そちらだけこの経路を使う (I40)。
+fn refined_colors_seeded(
+    g: &MoleculeGraph,
+    comp: &Component,
+    extra_key: impl Fn(usize) -> String,
+) -> Vec<usize> {
     let n = comp.inv.len();
     // 初期色: 元素・電荷・固定 H 数・次数 (正準番号付けが使う不変量と同じ粒度)
+    // + extra_key (既知の立体を区別に混ぜたいときだけ空でない)
     let mut keys: Vec<String> = (0..=n)
         .map(|c| {
             if c == 0 {
                 return String::new();
             }
-            let a = &g.atoms[comp.inv[c - 1]];
+            let orig = comp.inv[c - 1];
+            let a = &g.atoms[orig];
             format!(
-                "{}|{}|{}|{}",
+                "{}|{}|{}|{}|{}",
                 a.symbol,
                 a.formal_charge,
                 comp.fixed_h[c],
-                comp.adj[c].len()
+                comp.adj[c].len(),
+                extra_key(orig)
             )
         })
         .collect();
@@ -475,7 +495,16 @@ pub(crate) fn tetrahedral_layers(
     // 二重結合とまったく同じ規則。
     let mut defined = centers.clone();
     defined.sort_unstable();
-    let colors = refined_colors(g, comp);
+    // 未定義候補の置換基比較には、**既に配置が定まった中心の生パリティ**も
+    // 色に混ぜる (I40)。トポロジーだけで対称な 2 つの環分岐が、片方だけに
+    // 定義済み立体中心を持つために実際には区別できる (ジアステレオトピック)
+    // ケースを拾うため — is_achiral の対称性探索はこの色を使わない
+    // ([`refined_colors`] を直接呼ぶ) ので影響しない。
+    let colors = refined_colors_seeded(g, comp, |orig| {
+        tetra_raw_parity(g, comp, &ranks, orig)
+            .map(|c| c.to_string())
+            .unwrap_or_default()
+    });
     for &orig in &comp.inv {
         if is_undefined_tetra(g, comp, &colors, orig) {
             centers.push((canon_of(comp, orig), '?'));
@@ -561,6 +590,22 @@ mod tests {
         // cis-シクロヘキサン-1,2-ジオール
         assert_eq!(tms("O[C@@H]1CCCC[C@@H]1O"), "t5-,6+");
         assert_eq!(tms("[C@@H](F)([C@H](F)Cl)Cl"), "t1-,2+");
+    }
+
+    /// I40: トポロジーだけでは対称な 2 つの置換基でも、片方にだけ**定義済み
+    /// 立体中心**があれば区別できる (ジアステレオトピック) — その分岐を
+    /// 持つ第四級中心自体は未定義立体源性として `?` で併記されるべき。
+    ///
+    /// 環の 2 つの分岐が単なるグラフ構造としては対称なピペリジン誘導体で、
+    /// 分岐の片方に定義済み立体中心 (環融合炭素) がある。従来の 1-WL 色は
+    /// 既知の立体を見ないため 2 分岐を「同じ」と誤判定し、四級中心 (C1)
+    /// が未定義立体源性として一切出力されなかった。
+    #[test]
+    fn diastereotopic_branch_via_defined_neighbor_stereocenter() {
+        let smi = "CC(=O)OC1(C[C@H]2CC[C@@H](C1)N2C)C(=O)OC";
+        let g = build_molecule_graph(smi).unwrap();
+        let h = crate::inchi::to_inchi(&g).unwrap();
+        assert!(h.ends_with("/t9-,10+,12?"), "got: {h}");
     }
 
     /// 逆に、光学活性な (対称でない、あるいは同符号の) 分子では /m・/s が

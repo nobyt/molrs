@@ -80,7 +80,8 @@ fn pubchem_full_inchi() {
     //            → I36 98.35% (脱プロトンを酸性 O-H に限定)
     //            → I37 98.44% (同位体層 /i)
     //            → I38 98.70% (可動電荷: 荷電可動 H 群の併合と酸点の拡大)
-    //            → I39 98.71% (酸対に S を含む場合の N 端点、primary 限定を撤廃)。
+    //            → I39 98.71% (酸対に S を含む場合の N 端点、primary 限定を撤廃)
+    //            → I40 98.77% (未定義四面体中心の判定に隣接済み立体中心を混ぜる)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.987, "pubchem InChI accuracy {acc:.4} < 0.987");
+    assert!(acc >= 0.9876, "pubchem InChI accuracy {acc:.4} < 0.9876");
 }
