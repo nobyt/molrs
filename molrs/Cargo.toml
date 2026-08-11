@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "Minimal cheminformatics core (SMILES parsing, molecular graph, aromaticity, rings, canonicalization) replacing RDKit for smiles2iupac"
 
+[features]
+# molrs-api-contract.md §2: additive mutation API, off by default so the
+# frozen RDKit-parity-gated core (RUST_PORT_HANDOFF.md) is untouched unless
+# a consumer opts in.
+editing = []
+
 [dependencies]
 
 [dev-dependencies]

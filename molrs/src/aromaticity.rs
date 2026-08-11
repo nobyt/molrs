@@ -34,7 +34,8 @@ pub(crate) struct AromBond {
 }
 
 /// 電荷調整済みのデフォルト原子価 (ケクレ化の「二重結合が必要か」判定用)。
-fn adjusted_valence(symbol: &str, charge: i8) -> Option<i32> {
+/// `edit` モジュール (I45) も帯電原子の暗黙 H 再計算に再利用する。
+pub(crate) fn adjusted_valence(symbol: &str, charge: i8) -> Option<i32> {
     let v = match symbol {
         "C" => 4 - charge.abs() as i32,
         "N" | "P" | "As" => 3 + charge as i32,

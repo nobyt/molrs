@@ -367,7 +367,9 @@ pub fn build_molecule_graph(smiles: &str) -> Result<MoleculeGraph, ChemError> {
 }
 
 /// Tarjan の橋検出。edges[i] が橋なら結果の [i] が true。
-fn find_bridges(n: usize, edges: &[(usize, usize)]) -> Vec<bool> {
+/// `edit` モジュール (I45) も編集後の芳香族再認識 (`AromBond::in_ring`) の
+/// 再計算に再利用する。
+pub(crate) fn find_bridges(n: usize, edges: &[(usize, usize)]) -> Vec<bool> {
     let mut adj: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n]; // (相手, edge_idx)
     for (ei, &(a, b)) in edges.iter().enumerate() {
         adj[a].push((b, ei));

@@ -13,6 +13,8 @@ mod aromaticity;
 pub mod canon;
 pub mod conformer;
 pub mod depict;
+#[cfg(feature = "editing")]
+pub mod edit;
 pub mod elements;
 pub mod geometry;
 pub mod graph;
