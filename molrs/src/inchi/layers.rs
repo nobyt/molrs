@@ -92,8 +92,16 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
             }
         })
         .collect();
-    // 成分順序は式層と共通の規則 (I20)
-    comps.sort_by_key(|c| super::formula::component_sort_key(g, &c.inv));
+    // 成分順序は式層と共通の規則 (I20)。式・原子数・H 数まで一致する構成
+    // 異性体どうし (同じ分子式の異なる化合物の混合物) は、それだけでは
+    // タイブレークできず安定ソートで入力順のまま残ってしまう — 実 InChI は
+    // さらに接続層 (`/c`) の文字列で辞書式に順序付けている (I44)。
+    comps.sort_by_key(|c| {
+        (
+            super::formula::component_sort_key(g, &c.inv),
+            std::cmp::Reverse(connection_layer(c)),
+        )
+    });
     comps
 }
 
