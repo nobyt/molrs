@@ -108,17 +108,28 @@ pub(crate) fn is_metal(sym: &str) -> bool {
     )
 }
 
+/// 金属結合の切断結果。`metal_locked_ligands` は異方開裂で電荷を得た配位子
+/// のうちハロゲン**以外** (O/N/S 等) の原子集合 ([`normalize`] 参照)。
+pub(crate) struct Disconnected {
+    pub(crate) graph: MoleculeGraph,
+    pub(crate) metal_locked_ligands: std::collections::HashSet<usize>,
+}
+
 /// 金属原子に接続する全ての結合を切断したグラフを返す。
 /// 金属結合がなければ元のグラフをそのまま複製して返す。
-pub(crate) fn disconnect_metals(g: &MoleculeGraph) -> MoleculeGraph {
+pub(crate) fn disconnect_metals(g: &MoleculeGraph) -> Disconnected {
     let is_m = |i: usize| is_metal(g.atoms[i].symbol.as_str());
     if !g.bonds.iter().any(|b| is_m(b.begin_idx) || is_m(b.end_idx)) {
-        return g.clone();
+        return Disconnected {
+            graph: g.clone(),
+            metal_locked_ligands: std::collections::HashSet::new(),
+        };
     }
 
     let mut charges: Vec<i8> = g.atoms.iter().map(|a| a.formal_charge).collect();
     let mut bonds: Vec<BondInfo> = Vec::with_capacity(g.bonds.len());
     let mut kekule: Vec<f64> = Vec::with_capacity(g.bonds.len());
+    let mut metal_locked_ligands = std::collections::HashSet::new();
 
     for (bi, b) in g.bonds.iter().enumerate() {
         let (i, j) = (b.begin_idx, b.end_idx);
@@ -139,6 +150,13 @@ pub(crate) fn disconnect_metals(g: &MoleculeGraph) -> MoleculeGraph {
             let order = b.bond_order.round().max(1.0) as i8;
             charges[ligand] -= order;
             charges[metal] += order;
+            // ハロゲン化物イオンは通常どおりプロトン化 (`C[Hg]Cl` → HCl/p-1
+            // が既に検証済み)。O/N/S 等は金属由来の電荷を**恒久**として残す
+            // (`COCCO[Hg]` の実 InChI は `/q-1;+1` で O をプロトン化しない、
+            // I41)。
+            if !matches!(lsym, "F" | "Cl" | "Br" | "I") {
+                metal_locked_ligands.insert(ligand);
+            }
         }
     }
 
@@ -158,15 +176,18 @@ pub(crate) fn disconnect_metals(g: &MoleculeGraph) -> MoleculeGraph {
         );
     }
 
-    MoleculeGraph {
-        atoms,
-        bonds,
-        adjacency,
-        bond_orders,
-        ring_atom_sets: g.ring_atom_sets.clone(),
-        kekule_bond_orders: kekule,
-        parsed: g.parsed.clone(),
-        parser_to_graph: g.parser_to_graph.clone(),
+    Disconnected {
+        graph: MoleculeGraph {
+            atoms,
+            bonds,
+            adjacency,
+            bond_orders,
+            ring_atom_sets: g.ring_atom_sets.clone(),
+            kekule_bond_orders: kekule,
+            parsed: g.parsed.clone(),
+            parser_to_graph: g.parser_to_graph.clone(),
+        },
+        metal_locked_ligands,
     }
 }
 
@@ -231,7 +252,7 @@ mod tests {
     #[test]
     fn metal_carbon_bonds_break_without_charges() {
         let g = build_molecule_graph("C[Hg]C").unwrap();
-        let d = disconnect_metals(&g);
+        let d = disconnect_metals(&g).graph;
         assert!(d.atoms.iter().all(|a| a.formal_charge == 0));
         // Hg が孤立している
         let hg = d.atoms.iter().position(|a| a.symbol == "Hg").unwrap();
@@ -241,7 +262,7 @@ mod tests {
     #[test]
     fn metal_halogen_bond_breaks_heterolytically() {
         let g = build_molecule_graph("C[Hg]Cl").unwrap();
-        let d = disconnect_metals(&g);
+        let d = disconnect_metals(&g).graph;
         let hg = d.atoms.iter().position(|a| a.symbol == "Hg").unwrap();
         let cl = d.atoms.iter().position(|a| a.symbol == "Cl").unwrap();
         assert_eq!(d.atoms[hg].formal_charge, 1);
@@ -251,7 +272,7 @@ mod tests {
     #[test]
     fn metal_hydride_yields_lone_hydrogens() {
         let g = build_molecule_graph("[BiH3]").unwrap();
-        let d = disconnect_metals(&g);
+        let d = disconnect_metals(&g).graph;
         assert_eq!(hydrogen_component_sizes(&d), vec![1, 1, 1]);
         assert!(d.atoms.iter().all(|a| a.formal_charge == 0));
     }
@@ -260,7 +281,7 @@ mod tests {
     fn non_metals_are_left_connected() {
         for smi in ["Br[SiH2]C", "CC[AsH2]", "CB(O)O"] {
             let g = build_molecule_graph(smi).unwrap();
-            let d = disconnect_metals(&g);
+            let d = disconnect_metals(&g).graph;
             assert_eq!(d.bonds.len(), g.bonds.len(), "{smi}");
         }
     }

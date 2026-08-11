@@ -93,9 +93,10 @@ fn join_components(parts: &[String]) -> String {
 /// 一部は未対応。
 pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     // 金属結合の切断 (標準 InChI は disconnected-metal 表現) → 電荷正規化
-    let dg = disconnect::disconnect_metals(g);
+    let disconnected = disconnect::disconnect_metals(g);
     // 電荷正規化 (負の酸点を中性化・陽イオンを脱プロトン、残余 → q、移動 → p)
-    let (ng, _q, p) = normalize::neutralize(&dg);
+    let (ng, _q, p) =
+        normalize::neutralize(&disconnected.graph, &disconnected.metal_locked_ligands);
     let g = &ng;
 
     let comps = layers::build_components(g);

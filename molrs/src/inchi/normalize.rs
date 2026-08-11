@@ -12,10 +12,71 @@
 use crate::graph::{AtomInfo, BondInfo, MoleculeGraph};
 use std::collections::HashMap;
 
-/// 負電荷を中性化 (プロトン付加) できる元素。ハロゲン化物イオンも含む
-/// (InChI は [Cl-] を HCl/p-1 とする)。
-fn is_protonatable(sym: &str) -> bool {
-    matches!(sym, "N" | "O" | "S" | "Se" | "Te" | "F" | "Cl" | "Br" | "I")
+/// 負電荷を中性化 (プロトン付加) できるか (I41)。
+///
+/// `metal_locked` に含まれる原子 (金属との異方開裂で電荷を得た O/N/S 等) は
+/// 隣接原子の種類によらずプロトン化しない (`COCCO[Hg]` の実 InChI は
+/// `/q-1;+1` で O をプロトン化しない)。ハロゲン化物イオンはこの対象外
+/// (`C[Hg]Cl` → HCl/p-1 は検証済み、[`super::disconnect::disconnect_metals`]
+/// が `metal_locked` に含めていない)。
+///
+/// ハロゲン化物イオンは**孤立** (重原子への結合なし) のときだけ対象
+/// (InChI は孤立 `[Cl-]` を HCl/p-1 とする)。共有結合したハロゲン
+/// (超原子価錯体のブロモニウム/クロロニウム型アニオン) はプロトン化しない。
+///
+/// O/S/Se/Te は、隣接する重原子が全て**炭素**か、二重結合 O/S を持つ
+/// **酸性の S/P 中心** (スルホン酸・リン酸型) のときだけプロトン化する。
+/// 隣が N (ヒドロキシルアミン型 `N-O-` 結合)、あるいは酸性でない中心
+/// (亜ヒ酸 `[O-][As]([O-])[O-]` の As 等) はプロトン化しない
+/// (PubChem 実データで確認)。重原子への結合が無い孤立イオンは常にプロトン化。
+fn is_protonatable(
+    g: &MoleculeGraph,
+    atom: usize,
+    metal_locked: &std::collections::HashSet<usize>,
+) -> bool {
+    if metal_locked.contains(&atom) {
+        return false;
+    }
+    let sym = g.atoms[atom].symbol.as_str();
+    if matches!(sym, "F" | "Cl" | "Br" | "I") {
+        return !g.adjacency[atom]
+            .iter()
+            .any(|&nb| g.atoms[nb].symbol != "H");
+    }
+    if !matches!(sym, "O" | "S" | "Se" | "Te") {
+        return false;
+    }
+    g.adjacency[atom]
+        .iter()
+        .filter(|&&nb| g.atoms[nb].symbol != "H")
+        .all(|&nb| protonation_neighbor_ok(g, nb))
+}
+
+/// [`is_protonatable`] の隣接原子側の判定: 炭素、または二重結合 O/S を
+/// 持つ**酸性中心**だけを許す。元素を限定しない — スルホン酸・リン酸型
+/// (S/P) だけでなく、亜硝酸 `N(=O)[O-]`・過塩素酸 `[O-]Cl(=O)(=O)=O`・
+/// 亜セレン酸 `[O-][Se](=O)[O-]`・ヒ酸 `O[As](=O)([O-])[O-]` のように
+/// N/Cl/Se/As が中心でも同じ「二重結合 O/S を持つ」条件で酸性となる。
+/// 二重結合を持たない中心 (亜ヒ酸の As、ヒドロキシルアミン型の N-O 結合の
+/// N 等) は対象外。
+fn protonation_neighbor_ok(g: &MoleculeGraph, nb: usize) -> bool {
+    if g.atoms[nb].symbol == "C" {
+        return true;
+    }
+    g.bonds.iter().enumerate().any(|(bi, b)| {
+        (b.begin_idx == nb || b.end_idx == nb)
+            && g.kekule_bond_orders[bi] == 2.0
+            && matches!(
+                g.atoms[if b.begin_idx == nb {
+                    b.end_idx
+                } else {
+                    b.begin_idx
+                }]
+                .symbol
+                .as_str(),
+                "O" | "S"
+            )
+    })
 }
 
 /// 陽イオンから脱プロトンして中性化できる元素 (塩基点)。ハロゲンは対象外。
@@ -49,7 +110,12 @@ fn heavy_components(g: &MoleculeGraph, n_heavy: usize) -> Vec<usize> {
 }
 
 /// 中性化したグラフと (q, p)。q = 残余電荷合計、p = 除去 - 付加 プロトン数。
-pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
+/// `metal_locked` は [`super::disconnect::disconnect_metals`] が返す、
+/// 金属由来の電荷を恒久として扱うべき原子集合 ([`is_protonatable`] 参照)。
+pub(crate) fn neutralize(
+    g: &MoleculeGraph,
+    metal_locked: &std::collections::HashSet<usize>,
+) -> (MoleculeGraph, i32, i32) {
     let n_heavy = g.atoms.iter().filter(|a| a.symbol != "H").count();
     // 重原子が先頭に連続していることを前提 (build_molecule_graph の不変条件)
     let heavy_contiguous = (0..n_heavy).all(|i| g.atoms[i].symbol != "H");
@@ -101,6 +167,41 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
         budget[comp_of[i]] += g.atoms[i].formal_charge as i32;
     }
 
+    // アミジニウム/グアニジニウム型の陽電荷リレー (I41)。
+    //
+    // `[N+]1=C(...)N` (環内 N+ が二重結合、環外 NH2 が単結合) のような
+    // 中心は、電荷を持つ N+ 自身は H を持たないが、可動 H 群のもう一方の
+    // 端点 (環外 NH2) が H を持つ。実 InChI はこの群全体を 1 つのアミジン
+    // として中性化する — N+ の電荷と NH2 の 1 個の H が**同時に**消え、
+    // どちらの原子にも電荷は残らない (中性のアミジン `N=C-NH` になる)。
+    //
+    // これは I38 の「酸点をまたぐ可動負電荷」(無関係な外部の陽イオンが
+    // 別の酸性 O-H から借りる) とは逆方向で、**群自身が電荷を持つ**場合
+    // だけに限る。無関係な陽イオンが塩基性のアミジン/グアニジン基から
+    // 借りることはない (I38 で確認済み、チアミンのアミノピリミジンが
+    // `/q+1` のまま残るのがその証拠) ので、「群のメンバー自身が正電荷」
+    // という条件だけで安全に区別できる。
+    //
+    // ```
+    // smi  CCC(=O)C[N+]1=C(OC2=C1CCCC2)N
+    // want …h12H,…/p+1                     ← NH2 が NH になり N+ は消える
+    // ```
+    let mut relay_donor: HashMap<usize, usize> = HashMap::new();
+    for (eps, mh, _) in super::number::mobile_groups(g) {
+        if mh == 0 {
+            continue;
+        }
+        let Some(&donor) = eps.iter().find(|&&e| cur_h(e) > 0) else {
+            continue;
+        };
+        for &e in &eps {
+            if e != donor && g.atoms[e].formal_charge > 0 {
+                relay_donor.insert(e, donor);
+            }
+        }
+    }
+    let mut relay_debt = vec![0i32; n_heavy];
+
     for i in 0..n_heavy {
         let a = &g.atoms[i];
         let h = cur_h(i);
@@ -110,7 +211,7 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
             // 電荷分離 (ニトロ・N-オキシド等) → 触らない
             final_h[i] = h;
             new_charge[i] = a.formal_charge;
-        } else if ch < 0 && is_protonatable(&a.symbol) && *b < 0 {
+        } else if ch < 0 && is_protonatable(g, i, metal_locked) && *b < 0 {
             // 負電荷 → プロトン付加で中性化 (成分の正味電荷を超えない範囲で)
             let add = (-ch).min(-*b);
             n_add += add;
@@ -124,11 +225,25 @@ pub(crate) fn neutralize(g: &MoleculeGraph) -> (MoleculeGraph, i32, i32) {
             *b -= rem;
             final_h[i] = h - rem;
             new_charge[i] = (ch - rem) as i8;
+        } else if ch > 0 && h == 0 && *b > 0 && relay_donor.contains_key(&i) {
+            // アミジニウム/グアニジニウム型リレー: 自分自身は H を持たないが
+            // 可動 H 群のドナー端点が H を持つ。電荷はここで消し、H の除去は
+            // ドナー側に借りとして記録し、ループ後にまとめて適用する。
+            let rem = ch.min(*b);
+            n_remove += rem;
+            *b -= rem;
+            final_h[i] = h;
+            new_charge[i] = (ch - rem) as i8;
+            relay_debt[relay_donor[&i]] += rem;
         } else {
             // 中性化不能 (四級 N・金属など)、または成分が既に正味中性
             final_h[i] = h;
             new_charge[i] = a.formal_charge;
         }
+    }
+    // リレーの借りをドナー側に適用 (訪問順に依存しないよう、ここでまとめて)
+    for (i, &debt) in relay_debt.iter().enumerate() {
+        final_h[i] -= debt;
     }
 
     // 第 2 パス (I31): 成分にまだ正味の陽電荷が残っていて、外せる**陽イオンの**
@@ -335,7 +450,7 @@ mod tests {
 
     fn qp(smiles: &str) -> (i32, i32, String) {
         let g = build_molecule_graph(smiles).unwrap();
-        let (ng, q, p) = neutralize(&g);
+        let (ng, q, p) = neutralize(&g, &std::collections::HashSet::new());
         (q, p, super::super::formula::formula_layer(&ng))
     }
 
@@ -371,5 +486,62 @@ mod tests {
         let (q, p, f) = qp("CCO");
         assert_eq!((q, p), (0, 0));
         assert_eq!(f, "C2H6O");
+    }
+
+    /// I41: 負電荷の隣が N (ヒドロキシルアミン型 N-O 結合) や非酸性中心
+    /// (亜ヒ酸の As) だとプロトン化しない。共有結合したハロゲン化物
+    /// (ブロモニウム型) も同様。一方、酸性中心が S/P 以外 (亜硝酸の N、
+    /// 過塩素酸の Cl、亜セレン酸の Se、ヒ酸の As) でも二重結合 O/S さえ
+    /// あれば通常どおりプロトン化する。
+    #[test]
+    fn protonation_neighbor_matters() {
+        // ヒドロキシルアミン型: N-O 結合の O はプロトン化しない
+        let (q, _, f) = qp("N[O-]");
+        assert_eq!(q, -1, "N[O-]: {f}");
+        // 亜ヒ酸: As が二重結合を持たない → プロトン化しない
+        let (q, _, _) = qp("[O-][As]([O-])[O-]");
+        assert_eq!(q, -3);
+        // ヒ酸: As が二重結合 O を持つ → 通常どおりプロトン化
+        let (q, _, f) = qp("O[As](=O)([O-])[O-]");
+        assert_eq!(q, 0, "arsenic acid: {f}");
+        assert_eq!(f, "AsH3O4");
+        // 亜硝酸・過塩素酸も同様に酸性中心として扱う (中心 N/Cl 自身に
+        // 二重結合 O/S があれば、その中心が S/P でなくてもプロトン化する)
+        let (q, _, f) = qp("N(=O)[O-]");
+        assert_eq!(q, 0, "nitrite: {f}");
+        let (q, _, f) = qp("[O-]Cl(=O)(=O)=O");
+        assert_eq!(q, 0, "perchlorate: {f}");
+    }
+
+    /// I41: N⁻ (脱プロトン化アミン) は炭素に結合していても通常プロトン化しない
+    /// — カルボキシラート/スルホン酸型の O⁻/S⁻ とは異なり、実 InChI は
+    /// アミド/アミン型アニオンを恒久電荷のまま残す。
+    #[test]
+    fn amine_anion_stays_charged() {
+        let (q, _, _) = qp("CC[NH-]");
+        assert_eq!(q, -1);
+    }
+
+    /// I41: アミジニウム/グアニジニウム型リレー。環内 N+ 自身は H を持たない
+    /// が、可動 H 群のもう一方の端点 (環外 NH2) から 1 個を代わりに除去し、
+    /// N+ の電荷も同時に消える (`/p+1`、恒久電荷は残らない)。
+    #[test]
+    fn amidinium_relay_removes_group_h() {
+        let g = build_molecule_graph("CCC(=O)C[N+]1=C(OC2=C1CCCC2)N").unwrap();
+        let h = crate::inchi::to_inchi(&g).unwrap();
+        assert!(h.ends_with("/p+1"), "got: {h}");
+        assert!(!h.contains("/q"), "got: {h}");
+    }
+
+    /// I41: 金属との異方開裂で電荷を得た O/N/S 等 (ハロゲン以外) は
+    /// プロトン化せず恒久電荷として残す (`COCCO[Hg]` の実 InChI は
+    /// `/q-1;+1`)。ハロゲン化物 (`C[Hg]Cl`) は対象外で通常どおり
+    /// プロトン化する。
+    #[test]
+    fn metal_locked_heteroatom_stays_charged() {
+        let h = crate::inchi::inchi_of("COCCO[Hg]").unwrap();
+        assert!(h.contains("/q-1;+1"), "got: {h}");
+        let h = crate::inchi::inchi_of("C[Hg]Cl").unwrap();
+        assert!(h.contains("/p-1"), "got: {h}");
     }
 }
