@@ -365,6 +365,23 @@ fn poisoned_ring_atoms(
             .filter(|&&x| g.atoms[x].symbol != "H")
             .count()
     };
+    // 「橋頭ヘテロ原子」の対象は 2 個以上の環に属する真の縮環共有原子だけ
+    // (I47)。以前は `heavy_degree(a) >= 3` だけで判定しており、単環の
+    // ヘテロ原子が環外置換基を 1 個持つだけで (置換基の分だけ次数が 3 に
+    // なり) 縮環でなくても誤って橋頭扱いされ、環全体が毒されて正当な
+    // 互変異性まで壊れていた。例: 1-アルキル-5-アミノテトラゾリウム
+    // `CCN1N=C([N+](=N1)C)N` はアルキル基を持つ単環の N (次数 3、スラック
+    // なし) 1 個のせいで環全体が誤って毒されていた (この分子自体は毒を
+    // 解いただけでは完全には直らない — 環のもう一方の N まで可動 H 群に
+    // 入れるには別の未解決課題が要る、RUST_INCHI_I29_PLAN.md I47 節参照)。
+    let mut ring_count = vec![0usize; n];
+    for ring in &g.ring_atom_sets {
+        for &a in ring {
+            if a < n {
+                ring_count[a] += 1;
+            }
+        }
+    }
     let mut poisoned = std::collections::HashSet::new();
     for ring in &g.ring_atom_sets {
         // 非芳香族の環メンバー (縮環した飽和側の CH2 等) は、そもそも
@@ -387,6 +404,7 @@ fn poisoned_ring_atoms(
                 && g.atoms[a].symbol != "H"
                 && g.atoms[a].is_aromatic
                 && heavy_degree(a) >= 3
+                && ring_count[a] >= 2
                 && !has_search_slack(g, kekule, a)
         });
         if has_bridgehead_zero_slack {
