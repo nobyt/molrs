@@ -299,7 +299,21 @@ pub(crate) fn perceive_aromaticity(
         .map(|i| electron_contribution(atoms, bonds, i))
         .collect();
 
-    // Hückel 判定: 全原子が候補で π 電子和 ≡ 2 mod 4
+    // Hückel 判定: 全原子が候補で π 電子和 ≡ 2 mod 4。
+    //
+    // ただし π 電子総和が最小値の 2 で通るのは 3 員環 (シクロプロペニル
+    // カチオン型) だけに限る (I49)。4 員環以上で電子数 2 は「環内の実二重
+    // 結合 1 本だけがあり、残りの環メンバーは全員が環外二重結合で 0 電子
+    // 寄与」というだけの局所的な状況を意味し、環全体で電子が非局在化して
+    // いるわけではない — トロポン型 (7 員環、環外 C=O が 0 電子、残り 6 個の
+    // 環メンバーが環内で完全に交互する 3 本の二重結合を持ち計 6 電子) の
+    // ような正当な芳香族性とは違う。例: シクロブテン-1,2-ジオン環に
+    // アミノ・ヒドロキシ置換基が付いた分子 (`CCNC1=C(O)C(=O)C1=O`、
+    // スクエア酸誘導体) は環内二重結合が 1 本だけで残り 2 個の環員は環外
+    // C=O が 0 電子寄与するだけなので電子数 2 で誤って芳香族と判定され、
+    // 可動 H 検出のブリッジ探索が誤発火して本来固定のはずの環外 NH/OH を
+    // 環内カルボニルと誤併合していた (実 InChI はこの環を非芳香族・非可動
+    // として扱う)。
     let huckel = |atom_set: &[usize]| -> bool {
         let mut total = 0u32;
         for &i in atom_set {
@@ -307,6 +321,9 @@ pub(crate) fn perceive_aromaticity(
                 Some(c) => total += c,
                 None => return false,
             }
+        }
+        if total == 2 {
+            return atom_set.len() <= 3;
         }
         total >= 2 && (total - 2).is_multiple_of(4)
     };

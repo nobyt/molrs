@@ -91,7 +91,9 @@ fn pubchem_full_inchi() {
     //               IUPAC-InChI/InChI 公式 C ソース `ichiprt3.c` で確認)
     //            → I47 99.11% (橋頭ヘテロ原子の毒判定に真の縮環要件を追加)
     //            → I48 99.18% (成分順序タイブレークを接続層の文字列比較から
-    //               整数配列比較に修正、`ichimake.c::CompINChI2` で確認)。
+    //               整数配列比較に修正、`ichimake.c::CompINChI2` で確認)
+    //            → I49 99.19% (Hückel 判定: π 電子 2 個での芳香族認定を
+    //               3 員環限定に修正、4 員環ジオン類の誤った可動 H 検出を解消)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9917, "pubchem InChI accuracy {acc:.4} < 0.9917");
+    assert!(acc >= 0.9918, "pubchem InChI accuracy {acc:.4} < 0.9918");
 }
