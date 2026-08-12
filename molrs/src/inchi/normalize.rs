@@ -43,6 +43,20 @@ fn is_protonatable(
             .iter()
             .any(|&nb| g.atoms[nb].symbol != "H");
     }
+    if sym == "N" {
+        // アミド型 N⁻ (隣接炭素が酸性中心、すなわち O/S へ実二重結合を
+        // 持つ) だけプロトン化する。カルボキシラート O⁻ と違い、N⁻ は
+        // 隣が「ただの炭素」というだけでは対象にしない — 単純なアルキル
+        // アミンの脱プロトン化アニオン (`CC[N-]C`) は炭素だけに結合して
+        // いても実 InChI は `/q-1` のまま (I41 で `is_protonatable` から
+        // N を撤廃した理由)。一方でアミド型 (`C(=O)[NH-]`) は炭素の先に
+        // 実二重結合 O/S があるため、下の `acidic_center` 判定 (炭素の
+        // ショートカットを使わない版) でだけ拾える。
+        return g.adjacency[atom]
+            .iter()
+            .filter(|&&nb| g.atoms[nb].symbol != "H")
+            .all(|&nb| acidic_center(g, nb));
+    }
     if !matches!(sym, "O" | "S" | "Se" | "Te") {
         return false;
     }
@@ -63,6 +77,13 @@ fn protonation_neighbor_ok(g: &MoleculeGraph, nb: usize) -> bool {
     if g.atoms[nb].symbol == "C" {
         return true;
     }
+    acidic_center(g, nb)
+}
+
+/// [`protonation_neighbor_ok`] から「隣が炭素なら常に許す」ショートカットを
+/// 除いたもの — 実二重結合 O/S を持つ酸性中心かどうかだけを見る。N⁻ の
+/// プロトン化可否判定 ([`is_protonatable`]) はこちらを直接使う。
+fn acidic_center(g: &MoleculeGraph, nb: usize) -> bool {
     g.bonds.iter().enumerate().any(|(bi, b)| {
         (b.begin_idx == nb || b.end_idx == nb)
             && g.kekule_bond_orders[bi] == 2.0

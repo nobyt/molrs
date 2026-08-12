@@ -93,7 +93,9 @@ fn pubchem_full_inchi() {
     //            → I48 99.18% (成分順序タイブレークを接続層の文字列比較から
     //               整数配列比較に修正、`ichimake.c::CompINChI2` で確認)
     //            → I49 99.19% (Hückel 判定: π 電子 2 個での芳香族認定を
-    //               3 員環限定に修正、4 員環ジオン類の誤った可動 H 検出を解消)。
+    //               3 員環限定に修正、4 員環ジオン類の誤った可動 H 検出を解消)
+    //            → I50 99.21% (アミド型 N⁻ をプロトン化対象に追加、単純
+    //               アルキルアミン型 N⁻ は引き続き対象外)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9918, "pubchem InChI accuracy {acc:.4} < 0.9918");
+    assert!(acc >= 0.9920, "pubchem InChI accuracy {acc:.4} < 0.9920");
 }
