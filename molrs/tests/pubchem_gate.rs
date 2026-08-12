@@ -89,7 +89,9 @@ fn pubchem_full_inchi() {
     //            → I44 99.07% (式が同じ異性体成分どうしの順序タイブレーク)
     //            → I46 99.10% (/h の N* 圧縮に成分の重原子数一致を追加、
     //               IUPAC-InChI/InChI 公式 C ソース `ichiprt3.c` で確認)
-    //            → I47 99.11% (橋頭ヘテロ原子の毒判定に真の縮環要件を追加)。
+    //            → I47 99.11% (橋頭ヘテロ原子の毒判定に真の縮環要件を追加)
+    //            → I48 99.18% (成分順序タイブレークを接続層の文字列比較から
+    //               整数配列比較に修正、`ichimake.c::CompINChI2` で確認)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9910, "pubchem InChI accuracy {acc:.4} < 0.9910");
+    assert!(acc >= 0.9917, "pubchem InChI accuracy {acc:.4} < 0.9917");
 }

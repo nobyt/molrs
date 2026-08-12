@@ -94,15 +94,35 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
         .collect();
     // 成分順序は式層と共通の規則 (I20)。式・原子数・H 数まで一致する構成
     // 異性体どうし (同じ分子式の異なる化合物の混合物) は、それだけでは
-    // タイブレークできず安定ソートで入力順のまま残ってしまう — 実 InChI は
-    // さらに接続層 (`/c`) の文字列で辞書式に順序付けている (I44)。
-    comps.sort_by_key(|c| {
-        (
-            super::formula::component_sort_key(g, &c.inv),
-            std::cmp::Reverse(connection_layer(c)),
-        )
+    // タイブレークできず安定ソートで入力順のまま残ってしまう。
+    //
+    // I44 では `/c` の**レンダリング後の文字列**を辞書式に比較していたが、
+    // 実 InChI (`ichimake.c` の `CompINChI2`) は接続表を**レンダリング前の
+    // 整数配列**として比較する (`nConnTable[i]`、要素ごとに「大きい方が先」、
+    // 配列長も「長い方が先」) — 文字列比較は 2 桁の正準番号が混ざる配列で
+    // 数値比較と食い違う (例: 文字列では `"12" < "9"`、数値では `12 > 9`)
+    // ため、3 成分以上が同時にタイする場合に実 InChI と順序が合わないことが
+    // あった (I46 の節を参照)。`connection_layer` が使う `Component::adj`
+    // (正準番号ごとの整数隣接リスト) をそのまま数値比較することで、
+    // レンダリングを経由しない忠実な再現にした (I47)。
+    comps.sort_by(|a, b| {
+        super::formula::component_sort_key(g, &a.inv)
+            .cmp(&super::formula::component_sort_key(g, &b.inv))
+            .then_with(|| compare_conn_table_numeric(b, a))
     });
     comps
+}
+
+/// [`build_components`] の並べ替えタイブレークが使う、接続表 (`Component::adj`
+/// を正準番号順に平坦化した整数列) の辞書式比較。「配列が長い方が先」
+/// 「同じ位置なら値が大きい方が先」という実 InChI (`ichimake.c::CompINChI2`)
+/// の規則をそのまま数値配列で再現する。
+fn compare_conn_table_numeric(a: &Component, b: &Component) -> std::cmp::Ordering {
+    let flat = |c: &Component| -> Vec<usize> {
+        c.adj[1..].iter().flat_map(|nbs| nbs.iter().copied()).collect()
+    };
+    let (ta, tb) = (flat(a), flat(b));
+    ta.len().cmp(&tb.len()).then_with(|| ta.cmp(&tb))
 }
 
 /// c 層の本体 (先頭の `c` は含めない)。単一成分。
