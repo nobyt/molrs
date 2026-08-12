@@ -86,7 +86,9 @@ fn pubchem_full_inchi() {
     //            → I42 98.92% (ビニロガスなアミジン-カルボニル互変異性の橋渡し・
     //               ホスホルアミド酸の二級 N 端点)
     //            → I43 99.04% (P(V) の未定義四面体中心・多成分 /m 層の連結方式)
-    //            → I44 99.07% (式が同じ異性体成分どうしの順序タイブレーク)。
+    //            → I44 99.07% (式が同じ異性体成分どうしの順序タイブレーク)
+    //            → I46 99.10% (/h の N* 圧縮に成分の重原子数一致を追加、
+    //               IUPAC-InChI/InChI 公式 C ソース `ichiprt3.c` で確認)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9906, "pubchem InChI accuracy {acc:.4} < 0.9906");
+    assert!(acc >= 0.9909, "pubchem InChI accuracy {acc:.4} < 0.9909");
 }

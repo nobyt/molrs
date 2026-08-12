@@ -55,6 +55,25 @@ pub fn formula(g: &MoleculeGraph) -> String {
 /// 返し、呼び出し側が層自体を省略する (`InChI=1S/Bi.3H` に c/h 層がないのは
 /// このため)。
 fn join_components(parts: &[String]) -> String {
+    join_components_keyed(parts, None)
+}
+
+/// [`join_components`] の本体。`keys` が `Some` なら、文字列が一致しても
+/// `keys[i] != keys[j]` の隣接成分は圧縮しない (I46)。
+///
+/// 実 InChI (`ichiprt3.c`) の `/h` 層 (`str_H_atoms`) は圧縮前に
+/// `pINChI_Prev->nNumberOfAtoms == pINChI->nNumberOfAtoms` を要求してから
+/// `nNum_H` 配列を `memcmp` する — **レンダリング後の文字列同士**ではなく
+/// **成分の重原子数 + 生の H 数配列**で同一性を判定している。molrs は
+/// レンダリング後の文字列だけを比較していたため、式も重原子数も違う
+/// 2 成分 (末端 CH3 が 2 個・内部 CH2 が 2 個という部分だけが偶然同じ文字列
+/// になる、例: ペンタン-3-オン `CCC(=O)CC` とブタン `CCCC`) を誤って `2*…`
+/// に圧縮してしまっていた。`/c` (`str_Connections`) は `lenConnTable` の
+/// 一致 (= 重原子数と等価) を要求してから接続表を `memcmp` するので、
+/// 実質的に同じ制約を最初から満たしており today's fix の対象外
+/// (エタン+アセチレンのように式が違っても接続表がたまたま一致すれば
+/// 圧縮されるのは正しい実 InChI の挙動、詳細は RUST_INCHI_I29_PLAN.md I46 節)。
+fn join_components_keyed(parts: &[String], keys: Option<&[usize]>) -> String {
     if parts.iter().all(|s| s.is_empty()) {
         return String::new();
     }
@@ -62,7 +81,10 @@ fn join_components(parts: &[String]) -> String {
     let mut i = 0;
     while i < parts.len() {
         let mut j = i + 1;
-        while j < parts.len() && parts[j] == parts[i] {
+        while j < parts.len()
+            && parts[j] == parts[i]
+            && keys.is_none_or(|k| k[j] == k[i])
+        {
             j += 1;
         }
         let count = j - i;
@@ -118,7 +140,18 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
 
     let formula = formula::formula_layer(g);
     let c = join_components(&pad(comps.iter().map(layers::connection_layer).collect()));
-    let h = join_components(&pad_h(comps.iter().map(layers::hydrogen_layer).collect()));
+    // /h の N* 圧縮は文字列一致だけでなく成分の重原子数一致も要る (I46)。
+    // 末尾の H のみ成分には実成分と衝突しない番兵として 0 を割り当てる
+    // (どの実成分も重原子数 >= 1 を持つ)。
+    let h_keys: Vec<usize> = comps
+        .iter()
+        .map(|c| c.inv.len())
+        .chain(h_sizes.iter().map(|_| 0))
+        .collect();
+    let h = join_components_keyed(
+        &pad_h(comps.iter().map(layers::hydrogen_layer).collect()),
+        Some(&h_keys),
+    );
     // /q は成分ごとの残余電荷 (中性成分は空欄)
     let q_parts: Vec<String> = comps
         .iter()
