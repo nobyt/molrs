@@ -503,6 +503,24 @@ fn seed_groups(
                         == 2.0
             })
             .count();
+        // 中心の二重結合 S 数。P 中心専用 (下の `n_double_o_ok`) — チオホス
+        // ホルアミド `R-NH-P(=S)` はホスホルアミド酸 `R-NH-P(=O)` (I42) と
+        // 同じ星型を作るが、酸化数の高さを示す二重結合ヘテロ原子が O でなく
+        // S なので `n_double_o` だけでは検出できない (`inchi-1` で
+        // `CC(=S)NP(=S)(C)C`・`CC(=O)NP(=S)(C)C` とも P=S 側が実 InChI の
+        // 群に含まれることを確認済み)。S 中心 (スルホンアミド、2 個必須)
+        // の判定はこれまで通り O 限定のまま変更しない。
+        let n_double_s = g.adjacency[center]
+            .iter()
+            .filter(|&&nb| {
+                g.atoms[nb].symbol == "S"
+                    && kekule
+                        .get(&(center.min(nb), center.max(nb)))
+                        .copied()
+                        .unwrap_or(1.0)
+                        == 2.0
+            })
+            .count();
         // 中心に結合したヘテロ原子端点を分類 (受容体 = 二重結合、供与体 = H/負電荷)。
         // N が端点になるのは中心が炭素・N (トリアゾール/テトラゾールの
         // N=N-N(H)- 等)、または (末端 N かつ 中心が二重結合 O ≥2 = スルホニル
@@ -533,7 +551,8 @@ fn seed_groups(
             // 問わない。S 中心は実測例がまだなく一級 (heavy_deg==1) 限定の
             // ままにする。
             let center_sym = g.atoms[center].symbol.as_str();
-            let n_double_o_ok = n_double_o >= 2 || (center_sym == "P" && n_double_o >= 1);
+            let n_double_o_ok =
+                n_double_o >= 2 || (center_sym == "P" && n_double_o + n_double_s >= 1);
             let n_deg_ok = heavy_deg(nb) == 1 || center_sym == "P";
             if sym == "N" && !center_is_c_or_n(center) && !(n_deg_ok && n_double_o_ok) {
                 continue;
