@@ -73,11 +73,25 @@ fn is_protonatable(
 /// N/Cl/Se/As が中心でも同じ「二重結合 O/S を持つ」条件で酸性となる。
 /// 二重結合を持たない中心 (亜ヒ酸の As、ヒドロキシルアミン型の N-O 結合の
 /// N 等) は対象外。
+///
+/// 隣が O 単結合 (ペルオキシ酸型: `C(=O)O[O-]`、過ギ酸アニオンの末端 O)
+/// のときは、その先 (隣の隣) に酸性中心があれば許可する (I54)。ヒドロキシ
+/// ルアミン型の N-O は対象外のまま (この分岐は隣が O のときだけ発火し、
+/// N のケースには触れない)。
 fn protonation_neighbor_ok(g: &MoleculeGraph, nb: usize) -> bool {
     if g.atoms[nb].symbol == "C" {
         return true;
     }
-    acidic_center(g, nb)
+    if acidic_center(g, nb) {
+        return true;
+    }
+    if g.atoms[nb].symbol == "O" {
+        return g.adjacency[nb]
+            .iter()
+            .filter(|&&x| g.atoms[x].symbol != "H")
+            .any(|&x| acidic_center(g, x));
+    }
+    false
 }
 
 /// [`protonation_neighbor_ok`] から「隣が炭素なら常に許す」ショートカットを

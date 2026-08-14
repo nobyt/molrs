@@ -103,6 +103,9 @@ fn pubchem_full_inchi() {
     //               CompareHillFormulasNoH` 準拠のトークン単位比較に全面
     //               書き直し。旧規則「炭素数降順」は例からの逆算による
     //               過適合だった)。
+    //            → I54 99.35% (ペルオキシ酸アニオン `C(=O)O[O-]` の末端 O
+    //               をプロトン化対象に追加。隣接原子が酸性中心でなくても、
+    //               隣が単結合 O でその先に酸性中心があれば許可)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9933, "pubchem InChI accuracy {acc:.4} < 0.9933");
+    assert!(acc >= 0.9934, "pubchem InChI accuracy {acc:.4} < 0.9934");
 }
