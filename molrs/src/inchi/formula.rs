@@ -13,44 +13,86 @@ use crate::graph::MoleculeGraph;
 
 use super::number::connected_components;
 
-/// 成分の並び順キー (I20)。
+/// [`component_sort_key`] の主キー 1 要素分: Hill 式 (H を除く) を要素記号
+/// ごとに分解したときの 1 トークン。
 ///
-/// 実 InChI の多成分順序 (I29):
-/// **炭素数の降順 → 重原子数の降順 → H 数の降順 → 式の辞書順昇順**。
+/// 実 InChI `ichimake.c::GetElementAndCount`/`CompareHillFormulasNoH` の
+/// 移植: 炭素は常に他のどの元素よりも小さい特別扱い (`Carbon`)、式が尽きた
+/// 側は他のどの元素よりも大きい番兵 (`End`) — 「式が短い方が (辞書順で)
+/// 後ろ」という C 側のコメント通りの挙動になる。
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ElemKey {
+    Carbon,
+    Elem(String),
+    End,
+}
+
+/// Hill 式文字列 (H を含む) を `CompareHillFormulasNoH` と同じ規則で
+/// トークン列に分解する: 元素記号+個数を先頭から読み、H だけは完全に
+/// 読み飛ばす (比較にも位置にも影響しない)。個数は降順 (`Reverse`) — 同じ
+/// 元素なら原子数が多い方が先。
+fn hill_no_h_key(formula: &str) -> Vec<(ElemKey, std::cmp::Reverse<u64>)> {
+    let bytes = formula.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        i += 1;
+        if i < bytes.len() && bytes[i].is_ascii_lowercase() {
+            i += 1;
+        }
+        let sym = &formula[start..i];
+        let dstart = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let count: u64 = if dstart == i {
+            1
+        } else {
+            formula[dstart..i].parse().unwrap_or(1)
+        };
+        if sym == "H" {
+            continue;
+        }
+        let key = if sym == "C" {
+            ElemKey::Carbon
+        } else {
+            ElemKey::Elem(sym.to_string())
+        };
+        out.push((key, std::cmp::Reverse(count)));
+    }
+    out.push((ElemKey::End, std::cmp::Reverse(0)));
+    out
+}
+
+/// 成分の並び順キー (I20、I53 で全面書き直し)。
 ///
-/// - 炭素数**降順**が主キー。PubChem 実データ 863 件の多成分分子で
-///   例外なく成立する。安息香酸カリウム `C7H6O2.K` も硫酸ナトリウム
-///   `2Na.H2O4S` (どちらも炭素数 0) もこれで説明でき、`C6H5.C2H4O2.Hg` の
-///   ように炭素数の大きい成分が先に来るのが本質。
-/// - 重原子数**降順**が第 2 キー: `C10H11O.C5H5.Fe`、`C9H12O.3CO.Fe`。
-/// - H 数降順は重原子数が並んだときの決定打: `CH3.ClH.Hg` の ClH (H 1 個) が
-///   Hg (H 0 個) より先。
+/// 実 InChI `ichimake.c::CompINChI2` の主キーそのままの移植:
+/// **Hill 式 (H を除く) のトークン単位比較 → 重原子数の降順 → H 数の降順 →
+/// 式の辞書順昇順**。
 ///
-/// 金属から切り離された孤立 H 成分は重原子 0 個でこの比較に載らないため、
-/// 呼び出し側 ([`formula_layer`]) が常に末尾へ追加する (`Bi.3H`)。
+/// トークン単位比較 (`hill_no_h_key`) が本質: 炭素含有成分が常に先頭
+/// (炭素は他のどの元素よりも「小さい」特別値)、以降は残り元素を出現順
+/// (Hill 式なのでアルファベット順) に記号→個数の順で比較し、記号が違えば
+/// 記号のアルファベット順(小さい方が先)、同じ記号なら個数の多い方が先。
+/// H は完全に読み飛ばす (位置にも比較にも数えない) — `2H3N` (アンモニウム)
+/// が `H2O3S2` より先に来るのはこれで説明できる (H を除くと N と O3S2、
+/// N < O)。式が短く尽きた側は「無限に大きい元素」が続くとみなし後ろに回る
+/// (`CH2O` が `CH2` より先)。
 ///
-/// # 既知の残差 (無機塩)
-///
-/// アルカリ金属塩など「単原子カチオン + 多原子アニオン」で、実 InChI は
-/// カチオンを先に置くことがある (`2Na.H2O4S`、`5Na.H3O4P.H2O3S`、
-/// `Cu.N2O4.2NO3`)。一方 `FH.O3Si.2Zn` は単原子の Zn が最後に来るので
-/// 「単原子金属を先頭」という規則では説明できず、電荷層との関係も含めて
-/// 未解明。PubChem 863 件中 33 件 (3.8%) がこの系統で残る。
-///
-/// 旧実装は重原子数**昇順**だったが、これはリポジトリ内コーパスの
-/// 多成分 32 例 (`2Na.H2O4S` 系が多数) に過適合したもので、PubChem 実データ
-/// では 33.7% しか再現できなかった。本規則は 96.2%。
-pub(crate) fn component_sort_key(
-    g: &MoleculeGraph,
-    atoms: &[usize],
-) -> (
-    std::cmp::Reverse<usize>,
+/// 旧実装 (炭素数の単純な降順が主キー) は C ソースを読まずに PubChem
+/// 863 件から逆算したもので、`C10H6ClNO` vs `C10H7NO2` のような
+/// 同炭素数・同重原子数の成分順序を取り違えていた。
+pub(crate) type ComponentSortKey = (
+    Vec<(ElemKey, std::cmp::Reverse<u64>)>,
     std::cmp::Reverse<usize>,
     std::cmp::Reverse<usize>,
     String,
-) {
+);
+
+pub(crate) fn component_sort_key(g: &MoleculeGraph, atoms: &[usize]) -> ComponentSortKey {
     use std::cmp::Reverse;
-    let n_c = atoms.iter().filter(|&&a| g.atoms[a].symbol == "C").count();
+    let formula = component_formula(g, atoms);
     let h = atoms
         .iter()
         .map(|&a| {
@@ -60,12 +102,7 @@ pub(crate) fn component_sort_key(
                 .count()
         })
         .sum::<usize>();
-    (
-        Reverse(n_c),
-        Reverse(atoms.len()),
-        Reverse(h),
-        component_formula(g, atoms),
-    )
+    (hill_no_h_key(&formula), Reverse(atoms.len()), Reverse(h), formula)
 }
 
 /// 1 成分の元素数え上げ → Hill 式文字列。

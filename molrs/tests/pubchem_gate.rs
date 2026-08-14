@@ -99,6 +99,10 @@ fn pubchem_full_inchi() {
     //            → I51 99.22% (チオホスホルアミド `R-NH-P(=S)` の P=S 硫黄を
     //               星型の受容体端点に追加、`n_double_o_ok` が O 限定
     //               だったのを P 中心に限り O/S どちらでも可に修正)。
+    //            → I53 99.34% (成分並び順の主キーを `ichimake.c::
+    //               CompareHillFormulasNoH` 準拠のトークン単位比較に全面
+    //               書き直し。旧規則「炭素数降順」は例からの逆算による
+    //               過適合だった)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9921, "pubchem InChI accuracy {acc:.4} < 0.9921");
+    assert!(acc >= 0.9933, "pubchem InChI accuracy {acc:.4} < 0.9933");
 }
