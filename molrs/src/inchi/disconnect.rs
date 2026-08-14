@@ -225,6 +225,39 @@ pub(crate) fn hydrogen_component_sizes(g: &MoleculeGraph) -> Vec<usize> {
     sizes
 }
 
+/// [`hydrogen_component_sizes`] と同じ走査順で、H だけの各連結成分の
+/// 正味電荷を返す。ほとんどの場合 0 (金属水素化物切断由来・水素分子) だが、
+/// `[H-]` のように入力 SMILES が孤立 H 自体に電荷を持たせるケースがある
+/// (`[H-].C(=O)O[O-].[K+]` 等) — その場合だけ /q 層にこの成分の電荷を出す
+/// 必要がある。
+pub(crate) fn hydrogen_component_charges(g: &MoleculeGraph) -> Vec<i32> {
+    let n = g.atoms.len();
+    let is_lone_h = |i: usize| {
+        g.atoms[i].symbol == "H" && !g.adjacency[i].iter().any(|&nb| g.atoms[nb].symbol != "H")
+    };
+    let mut seen = vec![false; n];
+    let mut charges = Vec::new();
+    for start in 0..n {
+        if !is_lone_h(start) || seen[start] {
+            continue;
+        }
+        let mut charge = 0i32;
+        let mut stack = vec![start];
+        seen[start] = true;
+        while let Some(v) = stack.pop() {
+            charge += g.atoms[v].formal_charge as i32;
+            for &nb in &g.adjacency[v] {
+                if is_lone_h(nb) && !seen[nb] {
+                    seen[nb] = true;
+                    stack.push(nb);
+                }
+            }
+        }
+        charges.push(charge);
+    }
+    charges
+}
+
 /// H だけの成分の式 (サイズ 1 なら `H`、2 なら `H2`)。
 pub(crate) fn hydrogen_component_formula(size: usize) -> String {
     if size > 1 {

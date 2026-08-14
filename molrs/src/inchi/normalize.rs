@@ -434,7 +434,11 @@ pub(crate) fn neutralize(
             in_ring: false,
             num_hs: 0,
             chiral_tag: None,
-            formal_charge: 0,
+            // 金属水素化物切断由来の孤立 H は元々中性だが、`[H-]` のように
+            // 入力 SMILES 自体が孤立 H に電荷を持たせている場合もある
+            // (`[H-].C(=O)O[O-].[K+]` 等) — 電荷を保持しないと /q 層から
+            // 丸ごと消えてしまう。
+            formal_charge: g.atoms[old].formal_charge,
         });
     }
     // 孤立 H 同士の結合 (水素分子 `[H][H]`) は成分としてまとめる必要があるので

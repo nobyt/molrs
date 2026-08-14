@@ -136,10 +136,22 @@ pub fn build_molecule_graph(smiles: &str) -> Result<MoleculeGraph, ChemError> {
     }
 
     // ---- 2. 重原子の再インデックス ----
+    // マージされなかった H (電荷付き・同位体付き・原子クラス付き・非単結合
+    // など、`[H-]` や `[2H]` のように独立した原子として残るもの) も、通常の
+    // 暗黙 H 同様に重原子より後ろへ回す。[`crate::inchi::normalize::neutralize`]
+    // は「重原子が入力全体の先頭に連続している」ことを前提にしており、そう
+    // でない SMILES 順のまま (例: `[H-].C(=O)O[O-].[K+]`) だと不変条件が
+    // 崩れて電荷正規化が丸ごとスキップされてしまう。
     let mut parser_to_graph = vec![None; n];
     let mut graph_to_parser = Vec::new();
     for i in 0..n {
-        if !merged[i] {
+        if !merged[i] && parsed.atoms[i].symbol != "H" {
+            parser_to_graph[i] = Some(graph_to_parser.len());
+            graph_to_parser.push(i);
+        }
+    }
+    for i in 0..n {
+        if !merged[i] && parsed.atoms[i].symbol == "H" {
             parser_to_graph[i] = Some(graph_to_parser.len());
             graph_to_parser.push(i);
         }
@@ -461,11 +473,15 @@ mod tests {
 
     #[test]
     fn deuterium_kept() {
-        // [2H] は原子として残る
+        // [2H] は原子として残るが、電荷正規化 (I55) が前提とする
+        // 「重原子が先頭に連続」の不変条件を保つため、O・C (重原子) の後ろに
+        // 回される。
         let m = g("[2H]OC");
-        assert_eq!(m.atoms[0].symbol, "H");
-        assert_eq!(h_neighbors(&m, 1), 1); // O の H は重水素のみ
-        assert_eq!(h_neighbors(&m, 2), 3);
+        assert_eq!(m.atoms[0].symbol, "O");
+        assert_eq!(m.atoms[1].symbol, "C");
+        assert_eq!(m.atoms[2].symbol, "H");
+        assert_eq!(h_neighbors(&m, 0), 1); // O の H は重水素のみ
+        assert_eq!(h_neighbors(&m, 1), 3);
     }
 
     #[test]

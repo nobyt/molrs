@@ -122,9 +122,11 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     let g = &ng;
 
     let comps = layers::build_components(g);
-    // 重原子を含まない H だけの成分 (常に末尾)。c/q/立体層には何も寄与せず、
-    // h 層だけ水素分子 `[H][H]` が `1H` を出す。
+    // 重原子を含まない H だけの成分 (常に末尾)。c/立体層には何も寄与せず、
+    // h 層だけ水素分子 `[H][H]` が `1H` を出す。q 層は通常空欄だが、`[H-]`
+    // のように孤立 H 自体が電荷を持つ入力では例外的に寄与する。
     let h_sizes = disconnect::hydrogen_component_sizes(g);
+    let h_charges = disconnect::hydrogen_component_charges(g);
     let pad = |mut v: Vec<String>| {
         v.resize(v.len() + h_sizes.len(), String::new());
         v
@@ -152,7 +154,15 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
         &pad_h(comps.iter().map(layers::hydrogen_layer).collect()),
         Some(&h_keys),
     );
-    // /q は成分ごとの残余電荷 (中性成分は空欄)
+    // /q は成分ごとの残余電荷 (中性成分は空欄)。H だけの成分は通常 0 のまま
+    // 空欄 (`pad`) だが、`[H-]` 系の孤立 H だけは実際の電荷を出す。
+    let fmt_q = |sum: i32| {
+        if sum == 0 {
+            String::new()
+        } else {
+            format!("{sum:+}")
+        }
+    };
     let q_parts: Vec<String> = comps
         .iter()
         .map(|comp| {
@@ -161,14 +171,11 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
                 .iter()
                 .map(|&a| g.atoms[a].formal_charge as i32)
                 .sum();
-            if sum == 0 {
-                String::new()
-            } else {
-                format!("{sum:+}")
-            }
+            fmt_q(sum)
         })
+        .chain(h_charges.iter().map(|&c| fmt_q(c)))
         .collect();
-    let q = join_components(&pad(q_parts));
+    let q = join_components(&q_parts);
     let b = join_components(&pad(comps
         .iter()
         .map(|c| stereo::double_bond_layer(g, c))
