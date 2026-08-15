@@ -63,7 +63,17 @@ fn is_protonatable(
     g.adjacency[atom]
         .iter()
         .filter(|&&nb| g.atoms[nb].symbol != "H")
-        .all(|&nb| protonation_neighbor_ok(g, nb))
+        .all(|&nb| protonation_neighbor_ok(g, nb, sym == "O"))
+}
+
+/// 隣が炭素で、かつ酸性 O⁻ の判定に使われるものと同じ意味で「酸性化する」
+/// 炭素かどうか (芳香族 = フェノール型、二重結合を持つ = エノール/カルボ
+/// ニル型)。単なる sp3 アルキル炭素は対象外 (I58、下記参照)。
+fn is_acidic_carbon(g: &MoleculeGraph, c: usize) -> bool {
+    g.atoms[c].is_aromatic
+        || g.bonds.iter().enumerate().any(|(bi, b)| {
+            (b.begin_idx == c || b.end_idx == c) && g.kekule_bond_orders[bi] > 1.0
+        })
 }
 
 /// [`is_protonatable`] の隣接原子側の判定: 炭素、または二重結合 O/S を
@@ -78,8 +88,21 @@ fn is_protonatable(
 /// のときは、その先 (隣の隣) に酸性中心があれば許可する (I54)。ヒドロキシ
 /// ルアミン型の N-O は対象外のまま (この分岐は隣が O のときだけ発火し、
 /// N のケースには触れない)。
-fn protonation_neighbor_ok(g: &MoleculeGraph, nb: usize) -> bool {
+///
+/// `owner_is_o` (I58): O⁻ 自身が持つ「隣が炭素なら常に許可」のショート
+/// カットは、**単なる sp3 アルキル炭素** (アルコキシド `CC[O-]`・
+/// `CC(C)(C)[O-]`) には適用しない — 実 InChI はこれらを孤立イオンでも
+/// プロトン化せず `/q-1` のまま残す (`inchi-1` で確認: `CC[O-].[Na+]` は
+/// `/q-1;+1` で `/p` なし)。カルボキシラート・フェノラート・エノラート
+/// (炭素が芳香族または二重結合を持つ) は従来どおりプロトン化する。
+/// **S/Se/Te には適用しない** — チオラート `CC[S-]` は sp3 アルキル炭素
+/// 隣接でも実 InChI がプロトン化する (`CC[S-].[Na+]` → `/p-1`)、O だけが
+/// 例外的に非酸性アルコキシドを区別する。
+fn protonation_neighbor_ok(g: &MoleculeGraph, nb: usize, owner_is_o: bool) -> bool {
     if g.atoms[nb].symbol == "C" {
+        if owner_is_o {
+            return is_acidic_carbon(g, nb);
+        }
         return true;
     }
     if acidic_center(g, nb) {
