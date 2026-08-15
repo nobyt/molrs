@@ -310,7 +310,11 @@ pub(crate) fn neutralize(
             if a.symbol == "H" {
                 return false;
             }
-            a.symbol != "C"
+            // ホウ酸型 (B-OH) は「非炭素」の例外に含めない — ボロン酸
+            // `B(O)O` の O-H は無関係な陽電荷 (第四級アンモニウム等) の
+            // 相手にはならず、実 InChI は中性のまま `/q+1` に残す
+            // (I57、`c1ccc(C[n+]...)cc1B(O)O` で確認)。
+            (a.symbol != "C" && a.symbol != "B")
                 || a.is_aromatic
                 || g.bonds.iter().enumerate().any(|(bi, b)| {
                     (b.begin_idx == c || b.end_idx == c) && g.kekule_bond_orders[bi] > 1.0

@@ -117,6 +117,10 @@ fn pubchem_full_inchi() {
     //               正準番号自身 → 自分より小さい番号の隣接 (後退辺) のみを
     //               昇順) に修正。`ichicano.c::UpdateFullLinearCT` の
     //               `CT_ATOMID_IS_CURRANK` モードで確認)。
+    //            → I57 99.43% (`is_acidic_oh` の「隣が炭素でなければ酸性」
+    //               判定がホウ酸型 B-OH まで拾ってしまい、無関係な四級
+    //               アンモニウムの +1 を中和するのにボロン酸からプロトンを
+    //               奪っていたのを修正。B は非炭素の例外から除外)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9941, "pubchem InChI accuracy {acc:.4} < 0.9941");
+    assert!(acc >= 0.9942, "pubchem InChI accuracy {acc:.4} < 0.9942");
 }
