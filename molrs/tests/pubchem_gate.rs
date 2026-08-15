@@ -112,6 +112,11 @@ fn pubchem_full_inchi() {
     //               不変条件を壊して電荷正規化そのものが丸ごとスキップされて
     //               いた。孤立 H を重原子の後ろへ回すよう並び替え、電荷を
     //               保持したまま再構成し、/q 層にもその電荷を反映)。
+    //            → I56 99.42% (成分順序タイブレークの接続表を「全隣接を
+    //               フラット化」から実 InChI の `nConnTable` 相当 (各原子の
+    //               正準番号自身 → 自分より小さい番号の隣接 (後退辺) のみを
+    //               昇順) に修正。`ichicano.c::UpdateFullLinearCT` の
+    //               `CT_ATOMID_IS_CURRANK` モードで確認)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9937, "pubchem InChI accuracy {acc:.4} < 0.9937");
+    assert!(acc >= 0.9941, "pubchem InChI accuracy {acc:.4} < 0.9941");
 }

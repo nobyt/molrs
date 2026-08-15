@@ -113,13 +113,27 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
     comps
 }
 
-/// [`build_components`] の並べ替えタイブレークが使う、接続表 (`Component::adj`
-/// を正準番号順に平坦化した整数列) の辞書式比較。「配列が長い方が先」
-/// 「同じ位置なら値が大きい方が先」という実 InChI (`ichimake.c::CompINChI2`)
-/// の規則をそのまま数値配列で再現する。
+/// [`build_components`] の並べ替えタイブレークが使う、`nConnTable` 相当の
+/// 整数列の辞書式比較。「配列が長い方が先」「同じ位置なら値が大きい方が先」
+/// という実 InChI (`ichimake.c::CompINChI2`) の規則を数値配列で再現する。
+///
+/// `nConnTable` 自体は `ichicano.c::UpdateFullLinearCT` (`CT_ATOMID_IS_CURRANK`
+/// モード) が正準番号順に構築する: 各原子について「自分自身の正準番号」→
+/// 「自分より小さい正準番号を持つ隣接原子 (後退辺) を昇順」の順で積む。
+/// I48 時点では自分自身の番号を含めず全隣接 (前方・後退両方) を積んでいたが、
+/// これは複数成分が同じ Hill 式でタイし、かつ環閉じ位置の違いで後退辺の
+/// 蓄積ペースが成分ごとに異なる場合に実 InChI と順序がずれる (I53 直後の
+/// PubChem `c` バケツで確認: 自分自身の番号を挟むことで配列中の対応位置が
+/// ずれ、比較結果が反転するケースがあった)。
 fn compare_conn_table_numeric(a: &Component, b: &Component) -> std::cmp::Ordering {
     let flat = |c: &Component| -> Vec<usize> {
-        c.adj[1..].iter().flat_map(|nbs| nbs.iter().copied()).collect()
+        let n = c.adj.len() - 1;
+        let mut out = Vec::with_capacity(c.adj.iter().map(|v| v.len()).sum::<usize>() + n);
+        for i in 1..=n {
+            out.push(i);
+            out.extend(c.adj[i].iter().copied().filter(|&nb| nb < i));
+        }
+        out
     };
     let (ta, tb) = (flat(a), flat(b));
     ta.len().cmp(&tb.len()).then_with(|| ta.cmp(&tb))
