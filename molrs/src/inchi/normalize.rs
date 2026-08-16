@@ -137,9 +137,33 @@ fn acidic_center(g: &MoleculeGraph, nb: usize) -> bool {
     })
 }
 
-/// 陽イオンから脱プロトンして中性化できる元素 (塩基点)。ハロゲンは対象外。
-fn is_deprotonatable(sym: &str) -> bool {
-    matches!(sym, "N" | "O" | "S" | "Se" | "Te")
+/// 陽イオンから脱プロトンして中性化できるか (塩基点)。ハロゲンは対象外。
+///
+/// N は例外がある: 唯一の重原子隣接が O のとき (`[NH3+]O`・`[NH3+]OC` の
+/// ような N-O-R 型ヒドロキシルアミニウム) は脱プロトンしない。これは
+/// [`protonation_neighbor_ok`] が O⁻ 側で「隣が N (ヒドロキシルアミン型
+/// N-O 結合) ならプロトン化しない」としているのと同じ N-O 境界を逆方向
+/// (N 側が陽電荷) にも適用したもの — `inchi-1` で確認: `[NH3+]O` は
+/// `H4NO/q+1` のまま (`/p` を使わない) だが、`[NH3+]N` (ヒドラジニウム)・
+/// `C[NH2+]O` (N が O 以外にも重原子隣接を持つ) はどちらも通常どおり
+/// `/p+1` で脱プロトンする。
+fn is_deprotonatable(g: &MoleculeGraph, atom: usize) -> bool {
+    let sym = g.atoms[atom].symbol.as_str();
+    if !matches!(sym, "N" | "O" | "S" | "Se" | "Te") {
+        return false;
+    }
+    if sym == "N" {
+        let mut heavy_neighbors = g.adjacency[atom]
+            .iter()
+            .copied()
+            .filter(|&nb| g.atoms[nb].symbol != "H");
+        if let Some(only) = heavy_neighbors.next() {
+            if heavy_neighbors.next().is_none() && g.atoms[only].symbol == "O" {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// 重原子の連結成分 id (重原子 idx → 成分 id)。電荷の中性化は成分ごとに
@@ -276,7 +300,7 @@ pub(crate) fn neutralize(
             *b += add;
             final_h[i] = h + add;
             new_charge[i] = (ch + add) as i8;
-        } else if ch > 0 && is_deprotonatable(&a.symbol) && h > 0 && *b > 0 {
+        } else if ch > 0 && is_deprotonatable(g, i) && h > 0 && *b > 0 {
             // プロトン付き陽イオン → 除去で中性化
             let rem = ch.min(h).min(*b);
             n_remove += rem;
@@ -337,7 +361,16 @@ pub(crate) fn neutralize(
             // `B(O)O` の O-H は無関係な陽電荷 (第四級アンモニウム等) の
             // 相手にはならず、実 InChI は中性のまま `/q+1` に残す
             // (I57、`c1ccc(C[n+]...)cc1B(O)O` で確認)。
-            (a.symbol != "C" && a.symbol != "B")
+            //
+            // 隣が**それ自身が陽電荷を持つ N** (ヒドロキシルアミニウム型
+            // `[NH3+]O`) のときも除外する — ヒドロキサム酸 `C(=O)NO` の
+            // ように「中性の N を介して離れた四級 N+ から借りる」場合とは
+            // 違い、この O-H はその N 自身の電荷を中和する相手そのものに
+            // なってしまう。[`is_deprotonatable`] が N 側で同じ N-O 境界を
+            // 理由に脱プロトンを拒否しているのと対称に、O 側でも同じ
+            // 「その N 自身の電荷」を借りない (I61、`inchi-1` で確認:
+            // `[NH3+]O` は `/p` を使わず `H4NO/q+1` のまま)。
+            (a.symbol != "C" && a.symbol != "B" && !(a.symbol == "N" && a.formal_charge > 0))
                 || a.is_aromatic
                 || g.bonds.iter().enumerate().any(|(bi, b)| {
                     (b.begin_idx == c || b.end_idx == c) && g.kekule_bond_orders[bi] > 1.0
@@ -609,5 +642,22 @@ mod tests {
         assert!(h.contains("/q-1;+1"), "got: {h}");
         let h = crate::inchi::inchi_of("C[Hg]Cl").unwrap();
         assert!(h.contains("/p-1"), "got: {h}");
+    }
+
+    /// I61: ヒドロキシルアミニウム型 (N が唯一の重原子隣接として O だけを
+    /// 持つ陽イオン `[NH3+]O`・`[NH3+]OC`) は脱プロトンせず `/q` のまま
+    /// 残す。N が O 以外の重原子 (C・N) にも結合していれば通常どおり
+    /// `/p` で脱プロトンする。
+    #[test]
+    fn hydroxylammonium_stays_charged() {
+        let h = crate::inchi::inchi_of("[NH3+]O").unwrap();
+        assert_eq!(h, "InChI=1S/H4NO/c1-2/h2H,1H3/q+1");
+        let h = crate::inchi::inchi_of("[NH3+]OC").unwrap();
+        assert_eq!(h, "InChI=1S/CH6NO/c1-3-2/h1-2H3/q+1");
+        // N が O 以外にも重原子隣接を持てば脱プロトンする
+        let h = crate::inchi::inchi_of("C[NH2+]O").unwrap();
+        assert!(h.ends_with("/p+1"), "got: {h}");
+        let h = crate::inchi::inchi_of("[NH3+]N").unwrap();
+        assert!(h.ends_with("/p+1"), "got: {h}");
     }
 }
