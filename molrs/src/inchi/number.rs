@@ -973,6 +973,24 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
     // 全く無関係な官能基 (別のヘテロ原子群) まで誤って橋渡ししてしまうため。
     // 種メンバー (アミド N 等、非芳香族ヘテロ原子) から芳香環への入口は
     // この条件で自然に含まれる。
+    // スルホニル S(=O)(=O) のように 1 原子が実在二重結合を 2 本同時に持つ
+    // 過原子価中心は、どちらの二重結合も Kekule 構造の選択の余地がない
+    // (両方とも常に固定) — ブロッサム法の 1 対 1 マッチングモデルに乗せると
+    // 後勝ちで片方の対応だけが記録され、パートナー側だけが「マッチ済み」を
+    // 指したままの非対称な状態になり、無関係な環外酸素まで交互到達可能に
+    // 見えてしまう (縮環したベンゾチアジアジン 1,1-ジオキシドのグアニジン
+    // 型可動 H 群がスルホニル酸素まで誤併合するケースで発見)。実在二重結合
+    // 度数が 2 以上の原子が絡む結合は、どちらの端点も交互探索の「マッチ辺」
+    // として扱わない。
+    let real_double_count = |a: usize| -> usize {
+        g.adjacency[a]
+            .iter()
+            .filter(|&&nb| {
+                g.atoms[nb].symbol != "H"
+                    && kekule.get(&(a.min(nb), a.max(nb))).copied().unwrap_or(1.0) == 2.0
+            })
+            .count()
+    };
     let mut graph = blossom::MatchGraph::new(vertex_atom.len());
     let mut matched: Vec<Option<usize>> = vec![None; vertex_atom.len()];
     for b in &g.bonds {
@@ -982,7 +1000,7 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
         }
         let shared = shared_rings(u, v);
         let bo = kekule.get(&(u.min(v), u.max(v))).copied().unwrap_or(1.0);
-        if bo == 2.0 {
+        if bo == 2.0 && real_double_count(u) == 1 && real_double_count(v) == 1 {
             // マッチ (二重結合) は共有環ごとの分身どうしを対応付ける
             // (縮環の共有辺なら両環の分身ペアそれぞれに設定)。
             if shared.is_empty() {
