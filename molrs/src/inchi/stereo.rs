@@ -86,11 +86,16 @@ pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
             if tgroup[a] || tgroup[c] {
                 continue;
             }
-            // 環内二重結合は対象外 (InChI は小環の E/Z を持たない)
-            if g.ring_atom_sets
+            // 小環内二重結合は対象外 (8 員未満は幾何学的に E/Z を持てない)。
+            // 8 員以上の大環 (マクロ環) は実 InChI も E/Z を認識するため除外
+            // しない。
+            let smallest_ring_size = g
+                .ring_atom_sets
                 .iter()
-                .any(|ring| ring.contains(&a) && ring.contains(&c))
-            {
+                .filter(|ring| ring.contains(&a) && ring.contains(&c))
+                .map(|ring| ring.len())
+                .min();
+            if smallest_ring_size.is_some_and(|n| n < 8) {
                 continue;
             }
             if comp.num.get(a).copied().unwrap_or(0) == 0
