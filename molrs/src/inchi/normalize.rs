@@ -424,11 +424,42 @@ pub(crate) fn neutralize(
             *left -= 1;
         }
     }
+    // 孤立した `[H+]` (どの重原子にも結合しない、正電荷を持つ H 単体) は
+    // 実 InChI では「どこかの酸性中心が実際にプロトン化されるための実体」
+    // として直接消費される — 上のパスで数えた `n_add` (中性化のために
+    // "仮想的に" 足したプロトン数) のうち、実際にこの孤立 H+ の数だけは
+    // 実在の原子で賄えるので `/p` に計上しない。孤立 H+ を消費せず単なる
+    // 別成分として残すと `.H` という余分な成分と `+1;/p-1` が付いてしまう
+    // (`[H+].c1ccccc1N.[Cl-]` の実 InChI は `C6H8ClN` 相当を 2 成分
+    // `C6H7N.ClH` にまとめるだけで `/q`・`/p` を一切出さない)。
+    //
+    // 消費しきれない余り (孤立 H+ の数 > n_add) はそのまま孤立成分として
+    // 残す (下の孤立 H 保持ループ) — 対応する酸性中心が無い場合に相当し、
+    // 実 InChI での挙動は未検証だが少なくとも退行はしない安全側の扱い。
+    let mut consumed_lone_h_plus: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    if n_add > 0 {
+        for old in 0..g.atoms.len() {
+            if consumed_lone_h_plus.len() as i32 >= n_add {
+                break;
+            }
+            let is_lone_h = g.atoms[old].symbol == "H"
+                && !g.adjacency[old].iter().any(|&nb| g.atoms[nb].symbol != "H");
+            if is_lone_h && g.atoms[old].formal_charge == 1 {
+                consumed_lone_h_plus.insert(old);
+            }
+        }
+        n_add -= consumed_lone_h_plus.len() as i32;
+    }
+
     // q は最終的な電荷の総和 (2 パス目で変わるのでここで数え直す)
     let q: i32 = new_charge.iter().map(|&c| c as i32).sum();
 
     let p = n_remove - n_add;
-    if n_add == 0 && n_remove == 0 && q == g.atoms.iter().map(|a| a.formal_charge as i32).sum() {
+    if n_add == 0
+        && n_remove == 0
+        && consumed_lone_h_plus.is_empty()
+        && q == g.atoms.iter().map(|a| a.formal_charge as i32).sum()
+    {
         // 変化なし (かつ元から電荷なし) ならクローン省略のため元を返す
         if q == 0 {
             return (g.clone(), 0, 0);
@@ -481,7 +512,7 @@ pub(crate) fn neutralize(
     for old in 0..g.atoms.len() {
         let is_lone_h = g.atoms[old].symbol == "H"
             && !g.adjacency[old].iter().any(|&nb| g.atoms[nb].symbol != "H");
-        if !is_lone_h {
+        if !is_lone_h || consumed_lone_h_plus.contains(&old) {
             continue;
         }
         let h_idx = atoms.len();
@@ -661,3 +692,4 @@ mod tests {
         assert!(h.ends_with("/p+1"), "got: {h}");
     }
 }
+
