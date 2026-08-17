@@ -482,33 +482,57 @@ pub(crate) fn neutralize(
             kekule.push(g.kekule_bond_orders[bi]);
         }
     }
-    // H ノードを再付加
-    for (i, &fh) in final_h.iter().enumerate() {
-        for _ in 0..fh {
-            let h_idx = atoms.len();
-            atoms.push(AtomInfo {
-                idx: h_idx,
-                symbol: "H".into(),
-                atomic_num: 1,
-                is_aromatic: false,
-                in_ring: false,
-                num_hs: 0,
-                chiral_tag: None,
-                formal_charge: 0,
-            });
-            bonds.push(BondInfo {
-                begin_idx: i,
-                end_idx: h_idx,
-                bond_order: 1.0,
-                stereo: None,
-            });
-            kekule.push(1.0);
+    // H ノードを再付加。`crate::stereo::build_ctx` は「明示的に解析された原子
+    // (`parser_to_graph` に対応あり) はグラフ先頭の連続範囲を占める」という
+    // 不変条件に依存している (同位体を持ちうる原子だけを CIP ランクのノードに
+    // 含め、残りの暗黙 H は `n_h` カウントに畳み込むため)。そのため単純に
+    // 「重原子の出現順」で再構築すると、明示同位体 H (`[2H]` 等) が暗黙 H の
+    // 間に紛れ込み、その不変条件と `parser_to_graph` の対応 (`h_remap`) の
+    // 両方が壊れる。ここでは 2 パスに分け、明示原子を先に (元の解析順を保った
+    // まま) 重原子の直後へ詰め、暗黙 H は必ず末尾に回す。
+    let mut h_remap: HashMap<usize, usize> = HashMap::new();
+    let mut remaining: Vec<i32> = final_h.clone();
+    // パス 1: 明示的に解析された H (同位体標識の有無を問わない) を、元の解析順
+    // のまま先頭寄りに詰め直す。`fh` を超えた分 (脱プロトン等で消えた原子) は
+    // 対応なしのまま置き去りにする — `h_remap` に入らないので、後段の
+    // `parser_to_graph` 再構築で自動的に `None` になる。
+    for slot in &g.parser_to_graph {
+        let Some(old_gi) = *slot else { continue };
+        if old_gi >= g.atoms.len() || g.atoms[old_gi].symbol != "H" {
+            continue;
         }
+        let Some(&owner) = g.adjacency[old_gi].iter().find(|&&nb| nb < n_heavy) else {
+            continue; // 孤立 H (重原子に結合しない) は別扱い
+        };
+        if remaining[owner] <= 0 {
+            continue;
+        }
+        remaining[owner] -= 1;
+        let h_idx = atoms.len();
+        h_remap.insert(old_gi, h_idx);
+        atoms.push(AtomInfo {
+            idx: h_idx,
+            symbol: "H".into(),
+            atomic_num: 1,
+            is_aromatic: false,
+            in_ring: false,
+            num_hs: 0,
+            chiral_tag: None,
+            formal_charge: 0,
+        });
+        bonds.push(BondInfo {
+            begin_idx: owner,
+            end_idx: h_idx,
+            bond_order: 1.0,
+            stereo: None,
+        });
+        kekule.push(1.0);
     }
     // 金属切断で生じた孤立 H (どの重原子にも結合しない) は独立成分として
-    // 保持する必要がある (`[BiH3]` → `Bi.3H`)。上のループは重原子に結合した
-    // H しか再生成しないため、ここで補う (I20)。
-    let mut h_remap: HashMap<usize, usize> = HashMap::new();
+    // 保持する必要がある (`[BiH3]` → `Bi.3H`)。パス 1 は重原子に結合した H
+    // しか再生成しないため、ここで補う (I20)。これも「明示的に解析された
+    // 原子」の一種なので、暗黙 H を埋めるパス 2 より**前**に置いて、明示原子の
+    // 連続範囲 (`build_ctx` の不変条件) を維持する。
     for old in 0..g.atoms.len() {
         let is_lone_h = g.atoms[old].symbol == "H"
             && !g.adjacency[old].iter().any(|&nb| g.atoms[nb].symbol != "H");
@@ -545,6 +569,30 @@ pub(crate) fn neutralize(
             kekule.push(g.kekule_bond_orders[bi]);
         }
     }
+    // パス 2: 残り (真に新規のプロトン、または暗黙 H) を重原子順に追加。明示
+    // 原子 (パス 1 + 孤立 H) より必ず後ろに来るようにする。
+    for (i, &rem) in remaining.iter().enumerate() {
+        for _ in 0..rem.max(0) {
+            let h_idx = atoms.len();
+            atoms.push(AtomInfo {
+                idx: h_idx,
+                symbol: "H".into(),
+                atomic_num: 1,
+                is_aromatic: false,
+                in_ring: false,
+                num_hs: 0,
+                chiral_tag: None,
+                formal_charge: 0,
+            });
+            bonds.push(BondInfo {
+                begin_idx: i,
+                end_idx: h_idx,
+                bond_order: 1.0,
+                stereo: None,
+            });
+            kekule.push(1.0);
+        }
+    }
     // idx を振り直し (重原子は不変、H は末尾)
     for (i, a) in atoms.iter_mut().enumerate() {
         a.idx = i;
@@ -560,6 +608,24 @@ pub(crate) fn neutralize(
         );
     }
 
+    // parser_to_graph も H の再番号に合わせて付け替える。重原子はインデックス
+    // 不変なのでそのまま、H は `h_remap` にあれば新番号、無ければ (プロトン化/
+    // 脱プロトンで消えた原子) 対応なしとして None にする — さもないと
+    // 同位体層 (`/i`) が古い番号のまま別の H を指してしまう (I63)。
+    let parser_to_graph: Vec<Option<usize>> = g
+        .parser_to_graph
+        .iter()
+        .map(|old| {
+            old.and_then(|old_gi| {
+                if old_gi < n_heavy {
+                    Some(old_gi)
+                } else {
+                    h_remap.get(&old_gi).copied()
+                }
+            })
+        })
+        .collect();
+
     let ng = MoleculeGraph {
         atoms,
         bonds,
@@ -568,7 +634,7 @@ pub(crate) fn neutralize(
         ring_atom_sets: g.ring_atom_sets.clone(),
         kekule_bond_orders: kekule,
         parsed: g.parsed.clone(),
-        parser_to_graph: g.parser_to_graph.clone(),
+        parser_to_graph,
     };
     (ng, q, p)
 }
