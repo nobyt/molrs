@@ -159,6 +159,13 @@ fn pubchem_full_inchi() {
     //               build_ctx` が同位体を持ちうる原子だけを CIP ランクの
     //               ノードにするために利用) を、孤立 H の再付加順序も含めて
     //               維持するよう並び替えた)。
+    //            → I64 99.51% (他に結合先の重原子を持たない裸のプロトン
+    //               `[H+]` は物質として数えず丸ごと `/p` に繰り込むよう修正。
+    //               `[H+]` 単独は `InChI=1S/p+1` (式なし)、`[H+].[H-]` は
+    //               `H` の式 + `/q-1/p+1` が実 InChI の出力。従来は
+    //               `hydrogen_component_charges` がこの電荷を無条件で `/q`
+    //               に出しており、消費先の重原子成分が存在しない `[H+]`
+    //               単独入力で式が `H`・`/q+1` になっていた)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9949, "pubchem InChI accuracy {acc:.4} < 0.9949");
+    assert!(acc >= 0.9950, "pubchem InChI accuracy {acc:.4} < 0.9950");
 }

@@ -120,6 +120,10 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
     let (ng, _q, p) =
         normalize::neutralize(&disconnected.graph, &disconnected.metal_locked_ligands);
     let g = &ng;
+    // 他に結合先の重原子を持たない裸のプロトン (`[H+]`) は物質として
+    // 数えず、丸ごと /p に繰り込む (I64: `[H+]` 単独は `InChI=1S/p+1`、
+    // `[H+].[H-]` は `H` の式 + `/q-1/p+1` が実 InChI の出力)。
+    let p = p + disconnect::bare_proton_charge(g);
 
     let comps = layers::build_components(g);
     // 重原子を含まない H だけの成分 (常に末尾)。c/立体層には何も寄与せず、
@@ -212,7 +216,13 @@ pub fn to_inchi(g: &MoleculeGraph) -> Result<String, InchiError> {
         .map(String::from)
         .unwrap_or_default();
 
-    let mut out = format!("InChI=1S/{formula}");
+    // 式が完全に空になるのは「入力全体が裸のプロトンだけ」のとき
+    // (I64) — `InChI=1S/p+1` のように式区切りの `/` 自体を出さない。
+    let mut out = if formula.is_empty() {
+        "InChI=1S".to_string()
+    } else {
+        format!("InChI=1S/{formula}")
+    };
     if !c.is_empty() {
         out.push_str("/c");
         out.push_str(&c);

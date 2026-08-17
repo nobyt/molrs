@@ -197,54 +197,29 @@ pub(crate) fn disconnect_metals(g: &MoleculeGraph) -> Disconnected {
 /// 並ぶ (`[BiH3]` → `[1,1,1]` → 式 `3H`)。一方、水素分子 `[H][H]` は 2 個の H
 /// が結合したサイズ 2 の成分 1 つで、実 InChI はこれを「骨格原子 1 個 +
 /// その結合水素 1 個」として `InChI=1S/H2/h1H` と表現する。
-pub(crate) fn hydrogen_component_sizes(g: &MoleculeGraph) -> Vec<usize> {
+/// H だけの各連結成分を (サイズ, 正味電荷) で走査する共通ヘルパ。
+/// サイズ 1 かつ電荷が正の成分 (`[H+]` のように、他に結合先の重原子が
+/// 一切ない裸のプロトン) は実 InChI では物質として数えない —
+/// `[H+]` 単独が `InChI=1S/p+1` (式なし) になり、`[H+].[H-]` でも
+/// H- 側だけが `H` の式として残り余った `[H+]` は `/p+1` に回るのが
+/// その根拠 (I64)。これらは呼び出し側で `/p` に繰り込む。
+fn hydrogen_components(g: &MoleculeGraph) -> Vec<(usize, i32)> {
     let n = g.atoms.len();
     let is_lone_h = |i: usize| {
         g.atoms[i].symbol == "H" && !g.adjacency[i].iter().any(|&nb| g.atoms[nb].symbol != "H")
     };
     let mut seen = vec![false; n];
-    let mut sizes = Vec::new();
+    let mut out = Vec::new();
     for start in 0..n {
         if !is_lone_h(start) || seen[start] {
             continue;
         }
         let mut size = 0usize;
-        let mut stack = vec![start];
-        seen[start] = true;
-        while let Some(v) = stack.pop() {
-            size += 1;
-            for &nb in &g.adjacency[v] {
-                if is_lone_h(nb) && !seen[nb] {
-                    seen[nb] = true;
-                    stack.push(nb);
-                }
-            }
-        }
-        sizes.push(size);
-    }
-    sizes
-}
-
-/// [`hydrogen_component_sizes`] と同じ走査順で、H だけの各連結成分の
-/// 正味電荷を返す。ほとんどの場合 0 (金属水素化物切断由来・水素分子) だが、
-/// `[H-]` のように入力 SMILES が孤立 H 自体に電荷を持たせるケースがある
-/// (`[H-].C(=O)O[O-].[K+]` 等) — その場合だけ /q 層にこの成分の電荷を出す
-/// 必要がある。
-pub(crate) fn hydrogen_component_charges(g: &MoleculeGraph) -> Vec<i32> {
-    let n = g.atoms.len();
-    let is_lone_h = |i: usize| {
-        g.atoms[i].symbol == "H" && !g.adjacency[i].iter().any(|&nb| g.atoms[nb].symbol != "H")
-    };
-    let mut seen = vec![false; n];
-    let mut charges = Vec::new();
-    for start in 0..n {
-        if !is_lone_h(start) || seen[start] {
-            continue;
-        }
         let mut charge = 0i32;
         let mut stack = vec![start];
         seen[start] = true;
         while let Some(v) = stack.pop() {
+            size += 1;
             charge += g.atoms[v].formal_charge as i32;
             for &nb in &g.adjacency[v] {
                 if is_lone_h(nb) && !seen[nb] {
@@ -253,9 +228,44 @@ pub(crate) fn hydrogen_component_charges(g: &MoleculeGraph) -> Vec<i32> {
                 }
             }
         }
-        charges.push(charge);
+        out.push((size, charge));
     }
-    charges
+    out
+}
+
+fn is_bare_proton(&(size, charge): &(usize, i32)) -> bool {
+    size == 1 && charge > 0
+}
+
+pub(crate) fn hydrogen_component_sizes(g: &MoleculeGraph) -> Vec<usize> {
+    hydrogen_components(g)
+        .into_iter()
+        .filter(|c| !is_bare_proton(c))
+        .map(|(size, _)| size)
+        .collect()
+}
+
+/// [`hydrogen_component_sizes`] と同じ走査順で、H だけの各連結成分の
+/// 正味電荷を返す。ほとんどの場合 0 (金属水素化物切断由来・水素分子) だが、
+/// `[H-]` のように入力 SMILES が孤立 H 自体に電荷を持たせるケースがある
+/// (`[H-].C(=O)O[O-].[K+]` 等) — その場合だけ /q 層にこの成分の電荷を出す
+/// 必要がある。
+pub(crate) fn hydrogen_component_charges(g: &MoleculeGraph) -> Vec<i32> {
+    hydrogen_components(g)
+        .into_iter()
+        .filter(|c| !is_bare_proton(c))
+        .map(|(_, charge)| charge)
+        .collect()
+}
+
+/// 裸のプロトン (他に結合先の重原子を持たない `[H+]`) の電荷合計。
+/// `/p` 層に繰り込む (I64)。
+pub(crate) fn bare_proton_charge(g: &MoleculeGraph) -> i32 {
+    hydrogen_components(g)
+        .into_iter()
+        .filter(is_bare_proton)
+        .map(|(_, charge)| charge)
+        .sum()
 }
 
 /// H だけの成分の式 (サイズ 1 なら `H`、2 なら `H2`)。
