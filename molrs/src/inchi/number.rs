@@ -1232,6 +1232,17 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
     // 縮環系の橋頭ヘテロ原子 (例: インドリジン型の 3 配位 N で二重結合を
     // 一切持たない) を含む環のメンバーは孤立供与体の起点にもしない
     // (poisoned_ring_atoms、I19 §3.4)。
+    //
+    // ニトロ/N-オキシド型の O-/N- (`is_locked_zwitterion_neg`) は隣の
+    // 陽電荷との共有結合中性形の書き換えに過ぎず、真に可動な供与体ではない
+    // ため起点にしない。これらは H を持たず、seed_groups の星型判定にも
+    // 乗らない (アミド等と違い自身は受容体二重結合を持たないので)場合、
+    // ここで孤立供与体として拾われるとブロッサム探索の起点になり、
+    // 芳香環越しに無関係な (アミド N-H 等の) 群までブリッジ統合してしまう
+    // (例: `O=C1C=[N+]([O-])c2ccccc2N1` のピリジン N-オキシド O- がラクタム
+    // 側の N-H/C=O 群に誤って合流していた)。硝酸のように既に seed_groups
+    // 側で 1 中心の星型として捕捉されるケースは `members` に既に入っている
+    // ため、ここでの除外の影響を受けない。
     for i in 0..n {
         if excluded.contains(&i) || members.contains(&i) || poisoned.contains(&i) {
             continue;
@@ -1240,7 +1251,8 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
         if a.in_ring && !a.is_aromatic {
             continue;
         }
-        if is_hetero(a.symbol.as_str()) && (n_h_of(g, i) >= 1 || a.formal_charge < 0) {
+        let donor_charge = a.formal_charge < 0 && !is_locked_zwitterion_neg(g, i);
+        if is_hetero(a.symbol.as_str()) && (n_h_of(g, i) >= 1 || donor_charge) {
             members.insert(i);
             roots.push(i);
         }

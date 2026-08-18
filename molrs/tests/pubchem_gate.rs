@@ -186,6 +186,19 @@ fn pubchem_full_inchi() {
     //               `NC(=N)N[N+](=O)[O-]` のように無関係な N-H (グアニジン
     //               側) がニトロ基の O と union-find 経由で誤併合される
     //               のを防ぐ)。
+    //            → I67 99.56% (孤立供与体としてブリッジ探索の起点になる
+    //               ループが `is_locked_zwitterion_neg` (ニトロ/N-オキシド型
+    //               O⁻、隣の陽電荷との共有結合中性形の書き換えに過ぎず H を
+    //               持たない) まで拾っていた。これらは自身が受容体端点を
+    //               持たず `seed_groups` の星型にも乗らないため、この
+    //               ループでしか群に入る経路が無いにもかかわらず、芳香環
+    //               越しに無関係なラクタム N-H/C=O 群までブロッサム探索で
+    //               誤って橋渡ししていた (`O=C1C=[N+]([O-])c2ccccc2N1` の
+    //               ピリジン N-オキシド O⁻)。ループの負電荷条件に
+    //               `!is_locked_zwitterion_neg` を追加。硝酸のように
+    //               seed_groups 側で既に 1 群として捕捉される場合は
+    //               `members` に入っているためこのループ自体を通らず、
+    //               影響を受けない)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9954, "pubchem InChI accuracy {acc:.4} < 0.9954");
+    assert!(acc >= 0.9955, "pubchem InChI accuracy {acc:.4} < 0.9955");
 }
