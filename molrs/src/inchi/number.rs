@@ -491,6 +491,22 @@ fn seed_groups(
         if g.atoms[center].symbol == "H" || !has_search_slack(g, kekule, center) {
             continue;
         }
+        // 正電荷 N が負電荷 O に隣接する場合 (ニトロ基 `R-N+(=O)(-O-)`・
+        // 芳香族 N-オキシド `[n+]([O-])` 等) は、O どうしの互変異性
+        // (硝酸 `O=[N+]([O-])O` の 3 酸素は実 InChI でも本当に 1 群
+        // `(H,2,3,4)` として可動) はそのまま許すが、この中心に単結合で
+        // 繋がる無関係な N (グアニジンの N-N 単結合先など) を「供与体
+        // 端点」として拾ってはいけない。中心自身は固定された電荷分離
+        // 表現で二重結合の位置に選択の余地が無いため、その N 隣接原子との
+        // 間で H を交換する経路にはならない。ここを素通りさせると、
+        // ニトログアニジン `NC(=N)N[N+](=O)[O-]` で guanidine 側の種と
+        // union-find 経由で誤って 1 群に併合されてしまう (`inchi-1` は
+        // guanidine 側の 3N だけを 1 群にする)。
+        let nitro_like_center = g.atoms[center].symbol == "N"
+            && g.atoms[center].formal_charge > 0
+            && g.adjacency[center]
+                .iter()
+                .any(|&nb| g.atoms[nb].symbol == "O" && g.atoms[nb].formal_charge < 0);
         // 中心の二重結合 O 数 (非炭素中心の N 端点可否に使う)
         let n_double_o = g.adjacency[center]
             .iter()
@@ -555,6 +571,9 @@ fn seed_groups(
                 n_double_o >= 2 || (center_sym == "P" && n_double_o + n_double_s >= 1);
             let n_deg_ok = heavy_deg(nb) == 1 || center_sym == "P";
             if sym == "N" && !center_is_c_or_n(center) && !(n_deg_ok && n_double_o_ok) {
+                continue;
+            }
+            if nitro_like_center && sym == "N" {
                 continue;
             }
             let bond_from_center_is_double = kekule
