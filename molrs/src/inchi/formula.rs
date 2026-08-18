@@ -11,8 +11,6 @@
 
 use crate::graph::MoleculeGraph;
 
-use super::number::connected_components;
-
 /// [`component_sort_key`] の主キー 1 要素分: Hill 式 (H を除く) を要素記号
 /// ごとに分解したときの 1 トークン。
 ///
@@ -83,26 +81,24 @@ fn hill_no_h_key(formula: &str) -> Vec<(ElemKey, std::cmp::Reverse<u64>)> {
 /// 旧実装 (炭素数の単純な降順が主キー) は C ソースを読まずに PubChem
 /// 863 件から逆算したもので、`C10H6ClNO` vs `C10H7NO2` のような
 /// 同炭素数・同重原子数の成分順序を取り違えていた。
-pub(crate) type ComponentSortKey = (
-    Vec<(ElemKey, std::cmp::Reverse<u64>)>,
-    std::cmp::Reverse<usize>,
-    std::cmp::Reverse<usize>,
-    String,
-);
+pub(crate) type ComponentSortKey = (Vec<(ElemKey, std::cmp::Reverse<u64>)>, std::cmp::Reverse<usize>);
 
+/// 実 InChI `ichimake.c::CompINChI2` の比較チェーンの**先頭 2 段**
+/// (`CompareHillFormulasNoH` → 原子数 (H 抜き)) だけをここで持つ。
+///
+/// 元は続く比較段 (`nConnTable`・合計 H 数) もこのキーに含めていたが、
+/// 実際の C ソースでは nConnTable の比較が合計 H 数より**先**に来る
+/// (`CompINChI2` 1758〜1798 行)。総 H 数を早期にキーへ混ぜると、骨格
+/// (nConnTable) が同一で飽和度だけ異なる成分どうし (例: 同じ環の飽和/
+/// 不飽和カルボン酸) が全体の中で「骨格ごと」ではなく「H 数ごと」に
+/// まとまってしまい、実 InChI の並び (骨格が同じペアが隣接し、その中で
+/// H が多い方が先) と食い違う。conn table 比較 (`compare_conn_table_numeric`,
+/// I56) と合計 H 数比較は [`build_components`] 側の `.then_with()` チェーンに
+/// 正しい順序で持たせる。
 pub(crate) fn component_sort_key(g: &MoleculeGraph, atoms: &[usize]) -> ComponentSortKey {
     use std::cmp::Reverse;
     let formula = component_formula(g, atoms);
-    let h = atoms
-        .iter()
-        .map(|&a| {
-            g.adjacency[a]
-                .iter()
-                .filter(|&&nb| g.atoms[nb].symbol == "H")
-                .count()
-        })
-        .sum::<usize>();
-    (hill_no_h_key(&formula), Reverse(atoms.len()), Reverse(h), formula)
+    (hill_no_h_key(&formula), Reverse(atoms.len()))
 }
 
 /// 1 成分の元素数え上げ → Hill 式文字列。
@@ -149,12 +145,16 @@ pub(crate) fn component_formula(g: &MoleculeGraph, atoms: &[usize]) -> String {
 
 /// 分子全体の式層 (先頭の `InChI=1S/` と最初の `/` の間の部分)。
 pub(crate) fn formula_layer(g: &MoleculeGraph) -> String {
-    let mut comps = connected_components(g);
-    // 成分順序は c/h/q 層と共通の規則で決める (I20)
-    comps.sort_by_key(|atoms| component_sort_key(g, atoms));
+    // 成分順序は c/h/q 層と厳密に同じ並び (`layers::build_components`) を
+    // 再利用する。かつては独自に `connected_components` + 主キーだけの
+    // ソートを行っていたが、conn table による副次タイブレーク
+    // (`compare_conn_table_numeric`, I56) を経由しないため、Hill 式 (H 抜き)
+    // が同じ複数成分 (例: 同じ骨格の飽和/不飽和対) で c/h 層と順序が食い違い、
+    // F 層だけ誤ってまとめて `N*式` 表記にしてしまう分子があった。
+    let comps = super::layers::build_components(g);
     let mut formulas: Vec<String> = comps
         .iter()
-        .map(|atoms| component_formula(g, atoms))
+        .map(|c| component_formula(g, &c.inv))
         .collect();
     // 重原子を含まない H だけの成分 (金属から切り離された H、水素分子) は
     // 重原子比較の対象外なので常に末尾に置く

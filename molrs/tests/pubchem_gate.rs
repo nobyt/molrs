@@ -166,6 +166,18 @@ fn pubchem_full_inchi() {
     //               `hydrogen_component_charges` がこの電荷を無条件で `/q`
     //               に出しており、消費先の重原子成分が存在しない `[H+]`
     //               単独入力で式が `H`・`/q+1` になっていた)。
+    //            → I65 99.54% (成分並び順の主キー `component_sort_key` に
+    //               入っていた「合計 H 数」比較を除去。`ichimake.c::
+    //               CompINChI2` では conn table 比較の**後**に合計 H 数を
+    //               比較するが、H 数をキーに混ぜていたせいで骨格
+    //               (conn table) が同じ飽和/不飽和対がグローバルな H 数
+    //               ごとにまとめて分離され、実 InChI の「同じ骨格が隣接」
+    //               という並びと食い違っていた。合計 H 数の比較は
+    //               `build_components` 側の `.then_with()` チェーンへ
+    //               conn table 比較の後段として移設。`formula_layer` も
+    //               独自の (不完全な) ソートをやめ `build_components` の
+    //               並びをそのまま再利用するよう変更 (F/c/h 3 層が同じ
+    //               成分順序を共有することを保証)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9950, "pubchem InChI accuracy {acc:.4} < 0.9950");
+    assert!(acc >= 0.9953, "pubchem InChI accuracy {acc:.4} < 0.9953");
 }

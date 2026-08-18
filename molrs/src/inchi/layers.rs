@@ -105,10 +105,15 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
     // あった (I46 の節を参照)。`connection_layer` が使う `Component::adj`
     // (正準番号ごとの整数隣接リスト) をそのまま数値比較することで、
     // レンダリングを経由しない忠実な再現にした (I47)。
+    let total_h = |inv: &[usize]| -> usize { inv.iter().map(|&i| n_h_of(i) as usize).sum() };
     comps.sort_by(|a, b| {
         super::formula::component_sort_key(g, &a.inv)
             .cmp(&super::formula::component_sort_key(g, &b.inv))
             .then_with(|| compare_conn_table_numeric(b, a))
+            // `CompINChI2` は conn table が一致した後、合計 H 数を「多い方が
+            // 先」で比較する (1792〜1798 行、`num_H2 - num_H1`)。骨格
+            // (conn table) が同じ飽和/不飽和対をここで正しく隣接させる。
+            .then_with(|| total_h(&b.inv).cmp(&total_h(&a.inv)))
     });
     comps
 }
