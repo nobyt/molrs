@@ -30,6 +30,7 @@ fn ez_neighbors(g: &MoleculeGraph, end: usize, other: usize) -> Vec<usize> {
 pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
     let ranks = cip_ranks(g);
     let tgroup = super::number::tautomer_group_members(g);
+    let nitro_hubs = super::number::nitro_relay_hub_atoms(g);
     let mut entries: Vec<(usize, usize, char)> = Vec::new();
 
     for b in &g.bonds {
@@ -45,7 +46,7 @@ pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
         // (I32)。従来この除外は未定義 (`?`) 側にしか掛かっておらず、SMILES で
         // `/N=C(\c1ccccc1)/N` のように**構成が明示されていても** `/b` に出して
         // しまっていた。実 InChI はこの結合を `/b` に載せない。
-        if tgroup[a] || tgroup[c] {
+        if tgroup[a] || tgroup[c] || nitro_hubs.contains(&a) || nitro_hubs.contains(&c) {
             continue;
         }
         let na = ez_neighbors(g, a, c);
@@ -83,7 +84,7 @@ pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
             if g.atoms[a].is_aromatic || g.atoms[c].is_aromatic {
                 continue;
             }
-            if tgroup[a] || tgroup[c] {
+            if tgroup[a] || tgroup[c] || nitro_hubs.contains(&a) || nitro_hubs.contains(&c) {
                 continue;
             }
             // 小環内二重結合は対象外 (8 員未満は幾何学的に E/Z を持てない)。

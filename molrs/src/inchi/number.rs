@@ -1343,9 +1343,102 @@ pub(crate) fn mobile_groups(g: &MoleculeGraph) -> Vec<(Vec<usize>, u8, u8)> {
             groups.push((grp, total_h as u8, neg as u8));
         }
     }
+    // アシニトロ酸 (脂肪族) `R2C=[N+](-OH)(-O-)` の 2 つの末端 O。N+ の実
+    // 二重結合が (ヘテロ原子でなく) 炭素に向いているため上のブロッサム法
+    // ベースの検出には乗らないが、この 2 個の O 間の H/負電荷位置の交換は
+    // どちらの O-N 結合も単結合のまま変わらず、そもそも結合次数の付け替え
+    // を必要としない (`aci_nitro_hubs` 参照)。まだどの既存群にも属して
+    // いない O だけを対象に追加する。
+    let claimed: std::collections::HashSet<usize> =
+        groups.iter().flat_map(|(m, _, _)| m.iter().copied()).collect();
+    for (_hub, o1, o2) in aci_nitro_hubs(g, &kekule) {
+        if claimed.contains(&o1) || claimed.contains(&o2) {
+            continue;
+        }
+        let total_h = n_h_of(g, o1) + n_h_of(g, o2);
+        let neg = [o1, o2]
+            .iter()
+            .filter(|&&e| g.atoms[e].formal_charge < 0 && !is_locked_zwitterion_neg(g, e))
+            .count();
+        groups.push((vec![o1.min(o2), o1.max(o2)], total_h as u8, neg as u8));
+    }
     merge_charged_groups(g, &mut groups);
     groups.sort_by_key(|(m, _, _)| m[0]);
     groups
+}
+
+/// アシニトロ酸 (脂肪族ニトロ化合物の互変異性体) `R2C=[N+](-OH)(-O-)` の
+/// N+ ハブと、その 2 つの末端酸素を検出する。返り値は (ハブ, O1, O2)。
+///
+/// 通常のニトロ基 `R-[N+](=O)[O-]` (中心 N が O と実二重結合) は
+/// [`seed_groups`] の一般ロジックで検出できるが、アシニトロ型は N+ の
+/// 実二重結合の相手が炭素であり、`seed_groups` の受容体判定はヘテロ原子
+/// 隣接だけを見るためこの二重結合自体は種にならない。一方、2 つの末端 O
+/// (中性の -OH と負電荷の -O-) の間で H/負電荷の位置を交換するのに
+/// N=C 二重結合の位置は変える必要がない (どちらの解釈でも N-O 結合は
+/// 常に単結合) — 通常のカルボン酸/ニトロ基のような「二重結合の付け替え」
+/// を伴わない、結合次数レベルでは区別のつかない純粋な位置交換なので、
+/// 辺ベースのブロッサム法マッチングでは表現できず専用の局所パターンとして
+/// 検出する。
+fn aci_nitro_hubs(
+    g: &MoleculeGraph,
+    kekule: &std::collections::HashMap<(usize, usize), f64>,
+) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    for hub in 0..g.atoms.len() {
+        if g.atoms[hub].symbol != "N"
+            || g.atoms[hub].formal_charge <= 0
+            || g.atoms[hub].is_aromatic
+        {
+            continue;
+        }
+        let heavy: Vec<usize> = g.adjacency[hub]
+            .iter()
+            .copied()
+            .filter(|&x| g.atoms[x].symbol != "H")
+            .collect();
+        if heavy.len() != 3 {
+            continue;
+        }
+        let doubles: Vec<usize> = heavy
+            .iter()
+            .copied()
+            .filter(|&nb| kekule.get(&(hub.min(nb), hub.max(nb))).copied().unwrap_or(1.0) == 2.0)
+            .collect();
+        if doubles.len() != 1 || g.atoms[doubles[0]].symbol != "C" {
+            continue;
+        }
+        let terminals: Vec<usize> = heavy.iter().copied().filter(|&nb| nb != doubles[0]).collect();
+        if terminals.len() != 2
+            || !terminals.iter().all(|&nb| {
+                g.atoms[nb].symbol == "O"
+                    && heavy_degree(g, nb) == 1
+                    && kekule.get(&(hub.min(nb), hub.max(nb))).copied().unwrap_or(1.0) == 1.0
+            })
+        {
+            continue;
+        }
+        let (o1, o2) = (terminals[0], terminals[1]);
+        let has_signal =
+            n_h_of(g, o1) + n_h_of(g, o2) > 0 || g.atoms[o1].formal_charge < 0 || g.atoms[o2].formal_charge < 0;
+        if has_signal {
+            out.push((hub, o1, o2));
+        }
+    }
+    out
+}
+
+/// [`aci_nitro_hubs`] のハブ原子集合。この原子が絡む二重結合 (C=N+) は
+/// 互変異性で E/Z が定まらないため `/b` から除外する必要があるが、ハブ
+/// 自身は `/h` 層の可動 H 群メンバーとしては印字されない (実 InChI の出力
+/// でも印字される群メンバーは末端 O 2 個のみ) ので、[`tautomer_group_members`]
+/// とは別に返す。
+pub(crate) fn nitro_relay_hub_atoms(g: &MoleculeGraph) -> std::collections::HashSet<usize> {
+    let kekule = kekule_order_map(g);
+    aci_nitro_hubs(g, &kekule)
+        .into_iter()
+        .map(|(hub, _, _)| hub)
+        .collect()
 }
 
 /// 「塩型」の端点か — 可動負電荷が乗りうる酸性の O-H/S-H (I38)。
