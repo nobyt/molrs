@@ -26,8 +26,10 @@ fn ez_neighbors(g: &MoleculeGraph, end: usize, other: usize) -> Vec<usize> {
         .collect()
 }
 
-/// `/b` 層 (先頭の `b` は含めない)。空なら空文字列。
-pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
+/// 定義済み二重結合立体 (`/b` の `?` を含まない部分) を `(hi, lo, parity)` で返す。
+/// `double_bond_layer` と [`is_achiral`] (鏡像自己同型探索で E/Z 保存を検証する
+/// ために使う) の両方から呼ぶ共通ロジック。
+fn defined_double_bonds(g: &MoleculeGraph, comp: &Component) -> Vec<(usize, usize, char)> {
     let ranks = cip_ranks(g);
     let tgroup = super::number::tautomer_group_members(g);
     let nitro_hubs = super::number::nitro_relay_hub_atoms(g);
@@ -68,6 +70,15 @@ pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
         let (hi, lo) = (ca.max(cc), ca.min(cc));
         entries.push((hi, lo, parity));
     }
+    entries
+}
+
+/// `/b` 層 (先頭の `b` は含めない)。空なら空文字列。
+pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
+    let ranks = cip_ranks(g);
+    let tgroup = super::number::tautomer_group_members(g);
+    let nitro_hubs = super::number::nitro_relay_hub_atoms(g);
+    let mut entries = defined_double_bonds(g, comp);
 
     // 未定義の立体源性二重結合 (`?`): 定義済みの立体二重結合が 1 つでも
     // ある場合のみ、立体源性だが SMILES で構成が指定されていない二重結合
@@ -399,7 +410,12 @@ fn assign_ids(keys: &[String]) -> Vec<usize> {
 ///
 /// 探索は色クラス内のバックトラッキング。ノード数に上限を設け、超えた場合は
 /// 「アキラルと証明できなかった」= false を返す (安全側 — `/m` は出力される)。
-fn is_achiral(g: &MoleculeGraph, comp: &Component, centers: &[(usize, char)]) -> bool {
+fn is_achiral(
+    g: &MoleculeGraph,
+    comp: &Component,
+    centers: &[(usize, char)],
+    dbonds: &[(usize, usize, char)],
+) -> bool {
     let n = comp.inv.len();
     let color = refined_colors(g, comp);
     // 中心の正準番号 → パリティ (0/1)
@@ -462,6 +478,16 @@ fn is_achiral(g: &MoleculeGraph, comp: &Component, centers: &[(usize, char)]) ->
         false
     }
 
+    // 二重結合 E/Z は鏡映で反転しない (平面的な幾何なので鏡像でも同じ配置)。
+    // 鏡像自己同型 π が正当であるためには、四面体中心のパリティは反転する
+    // 一方、既知の二重結合はどれも π で写した先に**同じ**パリティの二重結合が
+    // 存在しなければならない。
+    let mut bond_parity: std::collections::HashMap<(usize, usize), char> =
+        std::collections::HashMap::new();
+    for &(hi, lo, p) in dbonds {
+        bond_parity.insert((hi, lo), p);
+    }
+
     let check = |pi: &[usize]| -> bool {
         for &(c, _) in centers {
             let img = pi[c];
@@ -475,6 +501,13 @@ fn is_achiral(g: &MoleculeGraph, comp: &Component, centers: &[(usize, char)]) ->
             b.sort_by_key(|&x| if x == usize::MAX { usize::MAX } else { pi[x] });
             let sigma = perm_parity(&a, &b);
             if (pc ^ sigma) != 1 - pimg {
+                return false;
+            }
+        }
+        for (&(u, v), &p) in &bond_parity {
+            let (pu, pv) = (pi[u], pi[v]);
+            let key = (pu.max(pv), pu.min(pv));
+            if bond_parity.get(&key) != Some(&p) {
                 return false;
             }
         }
@@ -535,7 +568,8 @@ pub(crate) fn tetrahedral_layers(
     // '-' に、m=1。未定義中心 (`?`) は反転の対象にも基準にもならない。
     let invert = defined[0].1 == '+';
     // メソ体 (鏡像が自分自身と一致) では実 InChI は /m・/s を出さない。
-    let m = if is_achiral(g, comp, &defined) {
+    let dbonds = defined_double_bonds(g, comp);
+    let m = if is_achiral(g, comp, &defined, &dbonds) {
         None
     } else {
         Some(if invert { '1' } else { '0' })
