@@ -60,6 +60,26 @@ fn is_protonatable(
     if !matches!(sym, "O" | "S" | "Se" | "Te") {
         return false;
     }
+    // 自分自身が O/S への実二重結合を持つ場合 (超原子価: `C[S-](=S)=S` の
+    // ような多硫化物型アニオン、`C[S-](=O)` のようなスルフィニル型) は
+    // 単純な一重結合アニオンではなく、電荷が固定された共鳴構造なので
+    // プロトン化しない (`inchi-1` で確認: `/q-1` のまま)。
+    if g.bonds.iter().enumerate().any(|(bi, b)| {
+        (b.begin_idx == atom || b.end_idx == atom)
+            && g.kekule_bond_orders[bi] == 2.0
+            && matches!(
+                g.atoms[if b.begin_idx == atom {
+                    b.end_idx
+                } else {
+                    b.begin_idx
+                }]
+                .symbol
+                .as_str(),
+                "O" | "S"
+            )
+    }) {
+        return false;
+    }
     g.adjacency[atom]
         .iter()
         .filter(|&&nb| g.atoms[nb].symbol != "H")
