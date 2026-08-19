@@ -140,7 +140,16 @@ fn protonation_neighbor_ok(g: &MoleculeGraph, nb: usize, owner_is_o: bool) -> bo
 /// [`protonation_neighbor_ok`] から「隣が炭素なら常に許す」ショートカットを
 /// 除いたもの — 実二重結合 O/S を持つ酸性中心かどうかだけを見る。N⁻ の
 /// プロトン化可否判定 ([`is_protonatable`]) はこちらを直接使う。
+///
+/// Si は対象外 (I79)。ケイ酸型 (`O[Si](=O)O`) の O-H は実 InChI では固定
+/// H のまま (可動 H 群にすらならない) で、ケイ酸イオン (`[O-][Si](=O)
+/// [O-].[Zn+2]`) も O⁻ をプロトン化せず `/q-2` の固定電荷として残す
+/// (`inchi-1` で確認) — ホウ酸型 B-OH が `is_acidic_oh` で対象外なのと
+/// 同じ理由で、Si=O を持つからといって酸性中心とはみなさない。
 fn acidic_center(g: &MoleculeGraph, nb: usize) -> bool {
+    if g.atoms[nb].symbol == "Si" {
+        return false;
+    }
     g.bonds.iter().enumerate().any(|(bi, b)| {
         (b.begin_idx == nb || b.end_idx == nb)
             && g.kekule_bond_orders[bi] == 2.0

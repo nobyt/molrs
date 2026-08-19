@@ -248,6 +248,13 @@ fn pubchem_full_inchi() {
     //               アルコキシド `CO[Mo]` (炭素置換基あり) や既に電荷を
     //               持つ配位子 `[O-][Fe]` は対象外のまま (`inchi-1` で両方
     //               確認)。`Fhpq` 4→3)。
+    //            → I79 99.66% (`acidic_center` から Si を除外。ケイ酸型
+    //               `O[Si](=O)O` の O-H は実 InChI では固定 H のまま (可動
+    //               H 群にすらならない) で、ケイ酸イオン `[O-][Si](=O)
+    //               [O-].[Zn+2]` も O⁻ をプロトン化せず `/q-2` の固定電荷
+    //               として残す (`inchi-1` で確認) — ホウ酸型 B-OH が
+    //               `is_acidic_oh` で対象外なのと同じ理由で、Si=O を持つ
+    //               からといって酸性中心とはみなさない。`Fhpq` 3→2)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9965, "pubchem InChI accuracy {acc:.4} < 0.9965");
+    assert!(acc >= 0.9966, "pubchem InChI accuracy {acc:.4} < 0.9966");
 }
