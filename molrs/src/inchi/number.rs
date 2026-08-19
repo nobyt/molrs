@@ -1653,13 +1653,14 @@ fn refine(atoms: &[NAtom], ranks: &mut [usize]) -> usize {
 }
 
 /// (辺シグネチャ, 番号付け) — 最小化の候補。
-/// 番号付けの比較キー: (c 層, h 層, q 層, b 層) の順。InChI が層を並べる順序と
-/// 同じで、前の層で差が付かない番号付けだけが次の層で比較される。
+/// 番号付けの比較キー: (c 層, h 層, q 層, b 層, t 層) の順。InChI が層を
+/// 並べる順序と同じで、前の層で差が付かない番号付けだけが次の層で比較される。
 type CandKey = (
     Vec<(usize, usize)>,
     Vec<(u8, Vec<usize>)>,
     Vec<(i8, Vec<usize>)>,
     Vec<(usize, usize, u8)>,
+    Vec<(usize, u8)>,
 );
 type Candidate = (CandKey, Vec<usize>);
 
@@ -1699,6 +1700,100 @@ fn b_signature(bs: &[BStereo], numbering: &[usize]) -> Vec<(usize, usize, u8)> {
         .collect();
     e.sort_unstable();
     e
+}
+
+/// `/t` 層のタイブレークに使う四面体立体の情報 (すべてローカル idx)。
+///
+/// [`BStereo`] と同じ考え方: 番号付けに依存しない材料 (CIP ランク・R/S・
+/// 仮想 4 番目の有無) だけを持ち、正準昇順は候補ごとに [`t_signature`] で
+/// 計算する。パリティの計算式自体は
+/// [`super::stereo::tetra_raw_parity`] と同一 (I73 の反証で確認済みの通り、
+/// 中間順序に CIP ランクを使うこと自体は無害) だが、そちらは確定した
+/// [`super::layers::Component`] の正準番号を使うのに対し、こちらは候補
+/// numbering を使う点だけが違う。
+struct TStereo {
+    center: usize,
+    /// 重原子隣接 (ローカル idx)。CIP ランク (グローバル) と対で持つ。
+    heavy: Vec<usize>,
+    heavy_cip: Vec<i64>,
+    /// 重原子 3 個 (暗黙 H か孤立電子対を仮想 4 番目として補う) か
+    virtual_4th: bool,
+    rs_bit: usize,
+    needs_flip: usize,
+}
+
+fn build_tstereo(g: &MoleculeGraph, atoms: &[usize], cip: &[usize]) -> Vec<TStereo> {
+    let mut local = std::collections::HashMap::new();
+    for (li, &gi) in atoms.iter().enumerate() {
+        local.insert(gi, li);
+    }
+    let mut out = Vec::new();
+    for (li, &gi) in atoms.iter().enumerate() {
+        let Some(rs) = g.atoms[gi].chiral_tag else {
+            continue;
+        };
+        let heavy_g: Vec<usize> = g.adjacency[gi]
+            .iter()
+            .copied()
+            .filter(|&nb| g.atoms[nb].symbol != "H")
+            .collect();
+        let n_h = g.adjacency[gi].len() - heavy_g.len();
+        let virtual_4th = match heavy_g.len() {
+            4 => false,
+            3 => true,
+            _ => continue,
+        };
+        let heavy: Vec<usize> = heavy_g.iter().filter_map(|&nb| local.get(&nb).copied()).collect();
+        if heavy.len() != heavy_g.len() {
+            continue;
+        }
+        let heavy_cip: Vec<i64> = heavy_g.iter().map(|&nb| cip[nb] as i64).collect();
+        let rs_bit = usize::from(rs == 'R');
+        let needs_flip = usize::from(!(heavy_g.len() == 3 && n_h == 1));
+        out.push(TStereo {
+            center: li,
+            heavy,
+            heavy_cip,
+            virtual_4th,
+            rs_bit,
+            needs_flip,
+        });
+    }
+    out
+}
+
+/// 番号付け → t 層の比較キー。
+///
+/// 印字は `/m` 正規化 (先頭定義済み中心が '+' なら全反転) を経るが、その
+/// 反転は全中心に一様にかかるため候補間の相対順序を変えない — 生パリティ
+/// (未反転) をそのまま比較材料に使ってよい。`/b` と同じ内部規約
+/// (`-`=1 < `+`=2) に合わせ、`-` を 0、`+` を 1 とする。
+fn t_signature(ts: &[TStereo], numbering: &[usize]) -> Vec<(usize, u8)> {
+    let mut v: Vec<(usize, u8)> = ts
+        .iter()
+        .map(|t| {
+            let mut items: Vec<(i64, i64, usize)> = t
+                .heavy
+                .iter()
+                .zip(t.heavy_cip.iter())
+                .map(|(&li, &r)| (numbering[li] as i64, r, li))
+                .collect();
+            if t.virtual_4th {
+                items.push((i64::MAX, -1, usize::MAX));
+            }
+            let mut cip_asc = items.clone();
+            cip_asc.sort_by_key(|&(_, r, id)| (r, id as i64));
+            let mut canon_asc = items.clone();
+            canon_asc.sort_by_key(|&(c, _, id)| (c, id as i64));
+            let src: Vec<usize> = cip_asc.iter().map(|&(_, _, id)| id).collect();
+            let dst: Vec<usize> = canon_asc.iter().map(|&(_, _, id)| id).collect();
+            let pp = super::stereo::perm_parity(&src, &dst);
+            let is_minus = (t.rs_bit ^ pp ^ t.needs_flip) == 1;
+            (numbering[t.center], u8::from(!is_minus))
+        })
+        .collect();
+    v.sort_unstable();
+    v
 }
 
 /// 番号付け → h 層の比較キー。
@@ -1760,6 +1855,7 @@ fn edge_signature(atoms: &[NAtom], numbering: &[usize]) -> Vec<(usize, usize)> {
 fn resolve(
     atoms: &[NAtom],
     bs: &[BStereo],
+    ts: &[TStereo],
     ranks: &[usize],
     budget: &mut usize,
     best: &mut Option<Candidate>,
@@ -1776,6 +1872,7 @@ fn resolve(
             h_signature(atoms, &numbering),
             q_signature(atoms, &numbering),
             b_signature(bs, &numbering),
+            t_signature(ts, &numbering),
         );
         if best.as_ref().map(|(k, _)| &key < k).unwrap_or(true) {
             *best = Some((key, numbering));
@@ -1807,7 +1904,7 @@ fn resolve(
                 *r += 1;
             }
         }
-        resolve(atoms, bs, &branched, budget, best);
+        resolve(atoms, bs, ts, &branched, budget, best);
     }
 }
 
@@ -1844,7 +1941,7 @@ fn ranks_from_keys<K: Ord>(keys: &[K]) -> Vec<usize> {
 /// 文字列最小化として扱えば両方とも自然に出る。電荷も同様で、層の順序が
 /// c → h → q なので、メチルイソシアニド `[C-]#[N+]C` は電荷ではなく先に
 /// h 層で決まり `h1H3` (CH3 が 1 番) になる。
-fn number_component(atoms: &[NAtom], bs: &[BStereo]) -> Vec<usize> {
+fn number_component(atoms: &[NAtom], bs: &[BStereo], ts: &[TStereo]) -> Vec<usize> {
     // 段 1: (元素, 次数)
     let keys1: Vec<(&(u8, String), usize)> =
         atoms.iter().map(|a| (&a.elem_key, a.degree)).collect();
@@ -1861,7 +1958,7 @@ fn number_component(atoms: &[NAtom], bs: &[BStereo]) -> Vec<usize> {
 
     let mut budget = 5000usize;
     let mut best: Option<Candidate> = None;
-    resolve(atoms, bs, &ranks, &mut budget, &mut best);
+    resolve(atoms, bs, ts, &ranks, &mut budget, &mut best);
     best.map(|(_, num)| num).unwrap_or_else(|| {
         let mut r = ranks.clone();
         refine(atoms, &mut r);
@@ -1924,7 +2021,8 @@ pub fn canonical_numbering(g: &MoleculeGraph) -> Vec<Vec<usize>> {
         .map(|atoms| {
             let natoms = build_natoms(g, atoms, &tgroup);
             let bs = build_bstereo(g, atoms, &cip);
-            let numbering = number_component(&natoms, &bs); // local idx → 0-based canon
+            let ts = build_tstereo(g, atoms, &cip);
+            let numbering = number_component(&natoms, &bs, &ts); // local idx → 0-based canon
                                                             // canon番号 → 元の原子 idx
             let mut inv = vec![0usize; atoms.len()];
             for (li, &cn) in numbering.iter().enumerate() {

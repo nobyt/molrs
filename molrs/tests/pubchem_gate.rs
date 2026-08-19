@@ -220,6 +220,13 @@ fn pubchem_full_inchi() {
     //               切るよう修正。実 InChI は `S=[Mo]` → `Mo.S` (電荷なし)、
     //               `O=[Cr](=O)([O-])[O-]` の `=O` も中性 O。電荷を移すのは
     //               order 1 の配位結合だけ (`CO[Mo]` → `/q-1;+1` は不変))。
+    //            → I73 99.62% (`number.rs::number_component` の候補比較キーに
+    //               `/t` 層タイブレークを追加。位相的に同値な四面体中心どうし
+    //               (エポキシド/オキセタン環の対称な2置換基等) の物理原子への
+    //               正準番号割り当てが、生パリティを無視した任意の分岐順で
+    //               決まっていたため、`/c`・`/h`・`/q`・`/b` では区別が付かず
+    //               `/t`・`/m` だけが実 InChI とずれていた。`t`22→21、
+    //               `mt`7→4)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9960, "pubchem InChI accuracy {acc:.4} < 0.9960");
+    assert!(acc >= 0.9961, "pubchem InChI accuracy {acc:.4} < 0.9961");
 }

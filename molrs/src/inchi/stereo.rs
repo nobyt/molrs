@@ -167,7 +167,7 @@ pub(crate) fn double_bond_layer(g: &MoleculeGraph, comp: &Component) -> String {
 }
 
 /// 置換のパリティ (偶=0/奇=1)。src, dst は同一要素の並び。
-fn perm_parity(src: &[usize], dst: &[usize]) -> usize {
+pub(crate) fn perm_parity(src: &[usize], dst: &[usize]) -> usize {
     let mut work = src.to_vec();
     let mut sw = 0usize;
     for i in 0..dst.len() {
