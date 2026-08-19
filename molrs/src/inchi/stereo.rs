@@ -303,7 +303,25 @@ fn is_undefined_tetra(
                 a.formal_charge > 0
             }
         }
-        "N" => a.formal_charge > 0 && !lone_pair_center,
+        "N" => {
+            if a.formal_charge > 0 {
+                !lone_pair_center
+            } else {
+                // 中性 N でも 3 員環 (アジリジン型) なら反転が立体的に
+                // 阻害され立体源性になる (`inchi-1` で実測: N-アルキル
+                // アジリジンは `?` が付くが、鎖状第三級アミンや 4 員環
+                // 以上 (アゼチジン等) の N は付かない)。孤立電子対中心
+                // (重原子 3・H 0) かつ、重原子隣接のうち 2 個が互いに
+                // 直接結合していること (= その 2 個と N で 3 員環) を
+                // 要求する。
+                lone_pair_center
+                    && heavy.iter().enumerate().any(|(i, &nb1)| {
+                        heavy[i + 1..]
+                            .iter()
+                            .any(|&nb2| g.adjacency[nb1].contains(&nb2))
+                    })
+            }
+        }
         _ => false,
     };
     if !ok_elem {
