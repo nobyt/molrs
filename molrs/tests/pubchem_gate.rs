@@ -255,6 +255,13 @@ fn pubchem_full_inchi() {
     //               として残す (`inchi-1` で確認) — ホウ酸型 B-OH が
     //               `is_acidic_oh` で対象外なのと同じ理由で、Si=O を持つ
     //               からといって酸性中心とはみなさない。`Fhpq` 3→2)。
+    //            → I80 99.67% (成分順序: 接続表・合計 H 数まで一致した場合、
+    //               `ichimake.c::CompINChI2` は続けて原子ごとの H 数
+    //               (`nNum_H[i]`、molrs の `fixed_h` に相当) を正準番号順に
+    //               比較する段を持つ (H0 最優先、非 0 同士は多い方が優先) が
+    //               この段が未実装だった。`per_atom_h_key` として追加。
+    //               インドール互変異性体混合物の成分順序が一致するように
+    //               なった)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
     assert!(acc >= 0.9966, "pubchem InChI accuracy {acc:.4} < 0.9966");
 }

@@ -114,8 +114,27 @@ pub(crate) fn build_components(g: &MoleculeGraph) -> Vec<Component> {
             // 先」で比較する (1792〜1798 行、`num_H2 - num_H1`)。骨格
             // (conn table) が同じ飽和/不飽和対をここで正しく隣接させる。
             .then_with(|| total_h(&b.inv).cmp(&total_h(&a.inv)))
+            // 合計 H 数まで一致した場合、`CompINChI2` はさらに原子ごとの H 数
+            // (`nNum_H[i]`、可動群メンバーは 0 扱い = `fixed_h` と同じ) を
+            // 正準番号順に比較する (1800〜1812 行): 「H 0 の原子が先、非 0
+            // 同士なら H が多い方が先」(コメント曰く `N < NH3 < NH2 < NH` の
+            // 順、すなわち出力順は N→NH3→NH2→NH)。全く同じ接続表・合計 H を
+            // 持つ構造異性体成分どうし (例: インドール互変異性体の混合物)
+            // が、この段まで来て初めて順序が決まるケースがある (I80)。
+            .then_with(|| per_atom_h_key(a).cmp(&per_atom_h_key(b)))
     });
     comps
+}
+
+/// [`build_components`] の並べ替え追加タイブレークが使う、`nNum_H[i]` 相当の
+/// 原子ごと優先度キー。「H 0 が最優先、非 0 同士なら H が多い方が優先」を
+/// 通常の昇順 `Ord` にそのまま乗るよう符号を反転して表現する
+/// (H=0 → `i64::MIN`、H=h(>0) → `-h`)。
+fn per_atom_h_key(c: &Component) -> Vec<i64> {
+    c.fixed_h[1..]
+        .iter()
+        .map(|&h| if h == 0 { i64::MIN } else { -(h as i64) })
+        .collect()
 }
 
 /// [`build_components`] の並べ替えタイブレークが使う、`nConnTable` 相当の
