@@ -145,9 +145,14 @@ pub(crate) fn disconnect_metals(g: &MoleculeGraph) -> Disconnected {
         }
         let (metal, ligand) = if mi { (i, j) } else { (j, i) };
         let lsym = g.atoms[ligand].symbol.as_str();
-        if lsym != "C" && lsym != "H" {
+        let order = b.bond_order.round().max(1.0) as i8;
+        // 多重結合 (order ≥ 2) の金属=配位子は**均等開裂**で中性に切る。
+        // 実 InChI: `S=[Mo]` → `Mo.S` (電荷なし)、`O=[Mo]=O` → `Mo.2O`、
+        // クロム酸 `O=[Cr](=O)([O-])[O-]` の `=O` も中性 O になる。電荷を
+        // 移すのは order 1 の配位結合だけ。単結合カルコゲン化物 (`CO[Mo]`
+        // → `/q-1;+1`) や `COCCO[Hg]` (I41) は従来どおり異方開裂する。
+        if lsym != "C" && lsym != "H" && order == 1 {
             // 異方開裂: 結合次数分の電荷を配位子(−)と金属(+)に振る
-            let order = b.bond_order.round().max(1.0) as i8;
             charges[ligand] -= order;
             charges[metal] += order;
             // ハロゲン化物イオンは通常どおりプロトン化 (`C[Hg]Cl` → HCl/p-1
@@ -310,6 +315,27 @@ mod tests {
         let cl = d.atoms.iter().position(|a| a.symbol == "Cl").unwrap();
         assert_eq!(d.atoms[hg].formal_charge, 1);
         assert_eq!(d.atoms[cl].formal_charge, -1);
+    }
+
+    #[test]
+    fn metal_chalcogen_double_bond_breaks_neutral() {
+        // 多重結合の金属=カルコゲンは中性で切る (I71)。
+        // 実 InChI: `S=[Mo]` → `Mo.S` (電荷なし)、単結合の `CO[Mo]` は
+        // 従来どおり異方開裂して `/q-1;+1`。
+        let g = build_molecule_graph("S=[Mo]").unwrap();
+        let d = disconnect_metals(&g).graph;
+        assert!(d.atoms.iter().all(|a| a.formal_charge == 0));
+        let s = d.atoms.iter().position(|a| a.symbol == "S").unwrap();
+        assert!(d.adjacency[s].is_empty());
+
+        // 単結合カルコゲン化物は引き続き異方開裂 (回帰防止)。
+        let g = build_molecule_graph("CO[Mo]").unwrap();
+        let d = disconnect_metals(&g);
+        let o = d.graph.atoms.iter().position(|a| a.symbol == "O").unwrap();
+        let mo = d.graph.atoms.iter().position(|a| a.symbol == "Mo").unwrap();
+        assert_eq!(d.graph.atoms[o].formal_charge, -1);
+        assert_eq!(d.graph.atoms[mo].formal_charge, 1);
+        assert!(d.metal_locked_ligands.contains(&o));
     }
 
     #[test]

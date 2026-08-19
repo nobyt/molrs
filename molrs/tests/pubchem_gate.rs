@@ -214,6 +214,12 @@ fn pubchem_full_inchi() {
     //               E/Z は鏡映で反転しない (R/S とは違う) ので、π が正当な
     //               らば既知の二重結合はどれも写した先で**同じ**パリティで
     //               なければならない、という検証を追加)。
+    //            → I71 99.60% (金属=カルコゲンの多重結合 (`S=[Mo]` 等) を
+    //               `disconnect_metals` が結合次数分の電荷 (Mo⁺²/S⁻²) に
+    //               異方開裂していたのを、order ≥ 2 は均等開裂 (中性) で
+    //               切るよう修正。実 InChI は `S=[Mo]` → `Mo.S` (電荷なし)、
+    //               `O=[Cr](=O)([O-])[O-]` の `=O` も中性 O。電荷を移すのは
+    //               order 1 の配位結合だけ (`CO[Mo]` → `/q-1;+1` は不変))。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9959, "pubchem InChI accuracy {acc:.4} < 0.9959");
+    assert!(acc >= 0.9960, "pubchem InChI accuracy {acc:.4} < 0.9960");
 }
