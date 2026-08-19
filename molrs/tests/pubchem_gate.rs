@@ -240,6 +240,14 @@ fn pubchem_full_inchi() {
     //               ニル型) を非対象に追加。単純な一重結合アニオンではなく
     //               電荷が固定された超原子価の共鳴構造なので、隣接原子側の
     //               判定に到達する前にプロトン化を止める。`Fhpq` 5→4)。
+    //            → I76 99.66% (`disconnect_metals` の異方開裂で、配位子が
+    //               金属以外に重原子を持たない中性の -OH/-SH (`inchi-1` で
+    //               `O[W](=O)(=O)O` → `2H2O.2O.W/q;;;;+2/p-2` 等を確認) を
+    //               `metal_locked_ligands` から除外し、`is_protonatable` に
+    //               中性化 (H2O/H2S 化 + `/p`) を任せるよう修正。既存の
+    //               アルコキシド `CO[Mo]` (炭素置換基あり) や既に電荷を
+    //               持つ配位子 `[O-][Fe]` は対象外のまま (`inchi-1` で両方
+    //               確認)。`Fhpq` 4→3)。
     // 残る不一致は RUST_INCHI_I29_PLAN.md を参照。
-    assert!(acc >= 0.9964, "pubchem InChI accuracy {acc:.4} < 0.9964");
+    assert!(acc >= 0.9965, "pubchem InChI accuracy {acc:.4} < 0.9965");
 }

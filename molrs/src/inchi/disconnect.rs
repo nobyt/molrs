@@ -158,8 +158,24 @@ pub(crate) fn disconnect_metals(g: &MoleculeGraph) -> Disconnected {
             // ハロゲン化物イオンは通常どおりプロトン化 (`C[Hg]Cl` → HCl/p-1
             // が既に検証済み)。O/N/S 等は金属由来の電荷を**恒久**として残す
             // (`COCCO[Hg]` の実 InChI は `/q-1;+1` で O をプロトン化しない、
-            // I41)。
-            if !matches!(lsym, "F" | "Cl" | "Br" | "I") {
+            // I41)。ただし配位子が「金属以外の重原子を持たない中性の
+            // -OH/-SH」("aqua"/"sulfido-H" 型配位子、`inchi-1` で
+            // `O[W](=O)(=O)O` → `2H2O.2O.W/q;;;;+2/p-2` などを確認済み)
+            // の場合は例外: 金属に結合する前の原子価がちょうど H だけで
+            // 満たされていた (=他の重原子置換基がゼロ、金属結合前は電荷
+            // なし) ので、切断後は H2O/H2S に中性化させる (`is_protonatable`
+            // に任せる) — アルコキシド `CO[Mo]` (炭素置換基を持つ) や
+            // 既に電荷を持っていた配位子 `[O-][Fe]` (`inchi-1` で確認:
+            // こちらは中性化されない) とはこの重原子置換基の有無と
+            // 事前電荷の有無で区別する。
+            let is_aqua_ligand = matches!(lsym, "O" | "S")
+                && g.atoms[ligand].formal_charge == 0
+                && g.adjacency[ligand]
+                    .iter()
+                    .filter(|&&nb| nb != metal)
+                    .all(|&nb| g.atoms[nb].symbol == "H")
+                && g.adjacency[ligand].iter().any(|&nb| nb != metal);
+            if !matches!(lsym, "F" | "Cl" | "Br" | "I") && !is_aqua_ligand {
                 metal_locked_ligands.insert(ligand);
             }
         }
